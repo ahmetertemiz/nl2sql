@@ -103,6 +103,66 @@ def test_sql_shown_formatted_but_run_unchanged(monkeypatch):
     assert seen == [raw]
 
 
+@pytest.fixture
+def comments(monkeypatch, calls):
+    log = []
+
+    def fake_interpret(question, sql, df, **_):
+        log.append({"question": question, "sql": sql, "rows": len(df)})
+        return "Sahte yorum: tek satır var."
+
+    monkeypatch.setattr(nl2sql, "interpret_result", fake_interpret)
+    return log
+
+
+def asked(at: AppTest) -> AppTest:
+    at.text_input(key="question").input("İstanbul'da kaç müşteri var?")
+    submit_button(at).click().run()
+    return at
+
+
+def test_interpret_off_by_default_no_button_no_call(calls, comments):
+    at = asked(open_app())
+    assert not any(b.label == "Yorumla" for b in at.button)
+    assert comments == []
+
+
+def test_interpret_on_shows_warning_and_button_and_calls_once(calls, comments):
+    at = open_app()
+    at.toggle(key="interpret_on").set_value(True).run()
+    assert any("modele gönderilir" in w.value for w in at.sidebar.warning)
+    at = asked(at)
+    assert comments == []                                    # düğmeye basılmadan çağrı yok
+    next(b for b in at.button if b.label == "Yorumla").click().run()
+    assert len(comments) == 1 and comments[0]["question"] == "İstanbul'da kaç müşteri var?"
+    assert len(calls) == 1                                   # sorgu yeniden çalışmadı
+    assert any("Sahte yorum" in s.value for s in at.success)
+    assert next(b for b in at.button if b.label == "Yorumla").disabled  # ikinci kez ücret yok
+
+
+def test_interpret_error_is_shown_and_retry_allowed(calls, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("ağ hatası")
+    monkeypatch.setattr(nl2sql, "interpret_result", broken)
+    at = open_app()
+    at.toggle(key="interpret_on").set_value(True).run()
+    at = asked(at)
+    next(b for b in at.button if b.label == "Yorumla").click().run()
+    assert any("ağ hatası" in e.value for e in at.error)
+    assert not next(b for b in at.button if b.label == "Yorumla").disabled
+
+
+def test_new_question_clears_old_comment(calls, comments):
+    at = open_app()
+    at.toggle(key="interpret_on").set_value(True).run()
+    at = asked(at)
+    next(b for b in at.button if b.label == "Yorumla").click().run()
+    at.text_input(key="question").input("Başka bir soru")
+    submit_button(at).click().run()
+    assert not any("Sahte yorum" in s.value for s in at.success)
+    assert not next(b for b in at.button if b.label == "Yorumla").disabled
+
+
 def test_example_button_calls_model(calls):
     at = open_app()
     example = next(b for b in at.button if b.label.startswith("Aylara"))

@@ -61,7 +61,7 @@ Setteki sorular kategorilere ayrılır: filtreleme, gruplama, çoklu JOIN, tarih
 ## Nasıl çalışır
 
 1. Kullanıcı kenar çubuğunda modelin görebileceği tablo ve sütunları seçer (varsayılan: hiçbiri).
-2. Yalnızca seçilen sütunların şeması (`CREATE TABLE` ifadeleri) modele bağlam olarak verilir. Veri satırları modele hiç gönderilmez; "Modele gönderilen şema" bölümü tam olarak neyin gittiğini gösterir.
+2. Yalnızca seçilen sütunların şeması (`CREATE TABLE` ifadeleri) modele bağlam olarak verilir. SQL üretilirken veri satırları modele gönderilmez; "Modele gönderilen şema" bölümü tam olarak neyin gittiğini gösterir.
    - İstisna: kullanıcı durum, kategori gibi sütunları "Değerleri modele gösterilecek sütunlar" listesinden işaretlerse, bu sütunların farklı değerleri şemaya yorum olarak eklenir (ör. `-- değerler: 'iade', 'iptal', 'tamamlandi'`), böylece model `WHERE` koşulunda doğru değeri yazar. 20'den fazla farklı değeri olan sütunların (ad, e-posta gibi) değerleri gönderilmez; her değer 40 karakterle kesilir.
 3. Model soruyu JSON olarak döndürür: SQL, açıklama ve grafik önerisi. Arayüz SQL'i okunaklı olsun diye `sqlparse` ile biçimlendirip gösterir; çalıştırılan sorgu modelin ürettiği metnin kendisidir.
 4. SQL dört katmanda denetlenir:
@@ -70,11 +70,16 @@ Setteki sorular kategorilere ayrılır: filtreleme, gruplama, çoklu JOIN, tarih
    - Ayrıştırıcının kaçırabileceği her şeye karşı SQLite yetkilendiricisi (`set_authorizer`) aynı kuralı veritabanı içinde, sorgu çalışmadan uygular.
    - Bağlantı salt-okunur açılır. Her sorgu en fazla 5 saniye çalışabilir (`NL2SQL_QUERY_TIMEOUT` ile değiştirilebilir); süreyi aşan sorgu durdurulur.
 5. Sorgu hata verirse hata mesajı modele geri gönderilir ve bir kez daha denenir. İzinsiz erişim denemesi ve süre aşımı yeniden denenmez, kullanıcıya gösterilir.
+6. İsteğe bağlı yorum: kenar çubuğundaki "Sonucu düz dille yorumla" anahtarı varsayılan olarak kapalıdır. Açılırsa sonucun altında "Yorumla" düğmesi çıkar. Basınca ikinci bir model çağrısı soruyu, SQL'i ve sonucun ilk 50 satırını alır ve 2-4 cümlelik bir yorum döndürür.
+   - Bu, sorgu **sonucunun** (gerçek veri satırlarının) modele gittiği tek yerdir; bu yüzden kullanıcı açıkça istemedikçe çalışmaz.
+   - Sonuç zaten izin listesine göre süzülmüştür: gizli sütunlar yorum için de gönderilmez.
+   - Hücre içerikleri `<sonuc>` etiketi içinde veri olarak işaretlenir; model içlerindeki talimat benzeri metinleri uygulamaz.
+   - Sorgu yeniden çalışmaz ve aynı sonuç için yorum bir kez alınır.
 
 ## Sonraki adımlar
 
 - [x] Değerlendirme seti: 20 soru + beklenen sonuç; doğruluk oranını ölç
-- [ ] Sonucu düz dille yorumlayan ikinci bir model çağrısı
+- [x] Sonucu düz dille yorumlayan ikinci bir model çağrısı (isteğe bağlı, varsayılan kapalı)
 - [ ] Sohbet geçmişi ("peki ya sadece İstanbul?" gibi takip soruları)
 - [ ] Kendi CSV / veritabanını yükleme
 - [ ] Streamlit Community Cloud'a yayınlama

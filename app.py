@@ -8,7 +8,7 @@ import streamlit as st
 
 import seed_db
 from charts import make_chart
-from nl2sql import answer, format_sql, get_schema, list_columns
+from nl2sql import INTERPRET_MAX_ROWS, answer, format_sql, get_schema, interpret_result, list_columns
 
 DB_PATH = Path(__file__).parent / "shop.db"
 EXAMPLES = [
@@ -37,7 +37,7 @@ with st.sidebar:
     st.header("Modelin görebileceği veriler")
     st.caption(
         "Yalnızca seçtiğin tablo ve sütunlar modele gösterilir ve sorgulanabilir. "
-        "Veri satırları hiçbir zaman modele gönderilmez."
+        "Sonuç yorumlama kapalıyken veri satırları modele gönderilmez."
     )
     with st.container(horizontal=True):
         st.button("Tümünü aç", on_click=set_all, args=(True,), width="stretch")
@@ -67,6 +67,18 @@ with st.sidebar:
         value_columns.setdefault(table, []).append(col)
     if value_columns:
         st.warning("Seçilen sütunların gerçek değerleri modele gönderilir.", icon=":material/info:")
+
+    # Varsayılan kapalı: açılınca sorgu SONUCU (gerçek satırlar) modele gider.
+    interpret_on = st.toggle(
+        "Sonucu düz dille yorumla",
+        key="interpret_on",
+        help=(f"Açıkken sonucun altında 'Yorumla' düğmesi çıkar. Basınca sonucun ilk "
+              f"{INTERPRET_MAX_ROWS} satırı modele gönderilir ve düz Türkçe bir yorum istenir. "
+              "Her yorum ayrı, ücretli bir model çağrısıdır."),
+    )
+    if interpret_on:
+        st.warning(f"'Yorumla'ya basınca sonucun ilk {INTERPRET_MAX_ROWS} satırı modele gönderilir.",
+                   icon=":material/info:")
 
     with st.expander("Modele gönderilen şema", icon=":material/visibility:"):
         st.code(get_schema(DB_PATH, allowed, value_columns) or "-- Henüz bir sütun seçilmedi",
@@ -146,5 +158,21 @@ if last:
                 # Altair: çubuklar SQL'deki sırayla, tarih ekseni kronolojik (bkz. charts.py)
                 st.altair_chart(make_chart(df, result["chart"], x, y), width="stretch")
             st.dataframe(df, hide_index=True)
-            st.download_button("CSV indir", df.to_csv(index=False).encode("utf-8-sig"),
-                               "sonuc.csv", "text/csv")
+            with st.container(horizontal=True):
+                st.download_button("CSV indir", df.to_csv(index=False).encode("utf-8-sig"),
+                                   "sonuc.csv", "text/csv")
+                # Yorum ayrı bir çağrı: sorgu yeniden çalışmaz, yalnızca bu sonuç yorumlanır.
+                want_comment = interpret_on and st.button(
+                    "Yorumla", icon=":material/chat:",
+                    disabled="comment" in last,  # aynı sonuç için ikinci kez ücret ödeme
+                )
+            if want_comment:
+                with st.spinner("Sonuç yorumlanıyor..."):
+                    try:
+                        last["comment"] = interpret_result(last["question"], result["sql"], df)
+                    except Exception as exc:  # hata görünür kalsın; düğme tekrar denenebilir
+                        st.error(f"Yorum alınamadı: {exc}")
+                if "comment" in last:
+                    st.rerun()  # düğme devre dışı görünsün
+            if interpret_on and last.get("comment"):
+                st.success(last["comment"], icon=":material/chat:")
