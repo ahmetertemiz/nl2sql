@@ -25,22 +25,29 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 | `charts.py` | Altair grafikleri: çubuklar SQL'deki satır sırasıyla, tarih ekseni kronolojik |
 | `test_charts.py` | Grafik sıralama testleri |
 | `test_nl2sql.py` | API anahtarı gerektirmeyen testler (`python -m pytest -q`) |
-| `eval_set.json` | 21 soruluk değerlendirme seti: soru + referans SQL |
-| `evaluate.py` | Soruları modele sorar, sonucu referansla karşılaştırır, doğruluk oranını yazar |
-| `test_evaluate.py` | Karşılaştırma mantığının testleri (API anahtarı gerektirmez) |
-| `test_app.py` | Arayüz testleri: model yalnızca Gönder'e basılınca çağrılıyor mu (sahte model, API anahtarı gerektirmez) |
+| `test_app.py` | Arayüz testleri: model yalnızca Gönder'e basılınca çağrılıyor mu, grafik ve SQL gösterimi (sahte model, API anahtarı gerektirmez) |
+| `evals/questions.yaml` | 20 soruluk değerlendirme seti: soru, referans SQL, zorluk (kolay/orta/zor), kategori |
+| `evals/run_evals.py` | Soruları modele sorar, sonucu referansla karşılaştırır, doğruluğu toplam ve zorluğa göre yazar |
+| `test_run_evals.py` | Karşılaştırma mantığının ve soru setinin testleri (API anahtarı gerektirmez) |
 
 ## Değerlendirme
 
 ```bash
-python evaluate.py --check-gold   # API'siz: referans SQL'lerin sonuçlarını gösterir
-python evaluate.py                # tüm soruları modele sorar (21-42 API çağrısı), doğruluğu yazar
-python evaluate.py --only 21      # yalnızca seçilen soruları sorar
+python evals/run_evals.py --check-gold   # API'siz: referans SQL'lerin sonuçlarını gösterir
+python evals/run_evals.py                # 20 soruyu modele sorar (20-40 API çağrısı)
+python evals/run_evals.py --only 13 15   # yalnızca seçilen soruları sorar
 ```
 
-21. soru, sıfır satışlı ürünleri yakalıyor mu diye bakar: o gün hiç satılmayan ürünler de "3 adetten az" sayılmalıdır. Satış kalemlerinden başlayan (INNER JOIN) bir sorgu bu ürünleri göremez ve soruyu kaçırır.
+Ölçüt çalıştırma doğruluğudur: modelin SQL'i referansla aynı metin olmak zorunda değil, aynı sonucu döndürmesi yeterli.
 
-Ölçüt çalıştırma doğruluğudur: modelin SQL'i referansla aynı metin olmak zorunda değil, aynı sonucu döndürmesi yeterli. Sütun adları ve fazladan sütunlar yok sayılır; satır sırası yalnızca `"ordered": true` olan sorularda önemlidir. Ayrıntılar `eval_results.json` dosyasına yazılır.
+- Sütun adları, sütun sırası ve fazladan sütunlar yok sayılır.
+- Satır sırası yalnızca `sirali: true` olan sorularda (soru sıralama istiyorsa) önemlidir.
+- Sayılar 2 basamağa yuvarlanarak karşılaştırılır.
+- "Bugün" 2026-11-20'ye sabitlenmiştir (`seed_db.py` ile aynı); "geçen ay", "son 3 ay" gibi sorular her gün aynı cevabı verir.
+
+Çıktıda toplam doğruluk, zorluk seviyesine göre doğruluk ve başarısız her soru için üretilen SQL ile referans SQL yan yana gösterilir. Sonuçlar `evals/results/` altına tarihli bir JSON dosyası olarak kaydedilir.
+
+Setteki sorular kategorilere ayrılır: filtreleme, gruplama, çoklu JOIN, tarih aralığı, oran hesabı ve şemayla cevaplanamayan 2 soru (beklenen davranış: SQL üretmemek). 15. soru sıfır satışlı ürünleri yakalıyor mu diye bakar: satış kalemlerinden başlayan bir INNER JOIN, o gün hiç satılmayan ürünleri göremez.
 
 ## Nasıl çalışır
 

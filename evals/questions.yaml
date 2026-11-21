@@ -1,0 +1,187 @@
+# Değerlendirme seti: 20 Türkçe soru.
+#
+# Alanlar:
+#   soru          modele sorulan metin
+#   referans_sql  doğru cevabı veren SQL; null = şemayla cevaplanamaz (model SQL üretmemeli)
+#   zorluk        kolay | orta | zor
+#   kategori      filtreleme | gruplama | join | tarih | oran | cevaplanamaz
+#   sirali        true ise satır sırası da karşılaştırılır (soru sıralama istiyorsa)
+#
+# "Bugün" 2026-11-20 olarak sabittir (seed_db.py ile aynı): "geçen ay" = Ekim 2026.
+# Karşılaştırma sonuç üzerinden yapılır: modelin SQL'i farklı olabilir, sonuç aynı olmalı.
+
+- id: 1
+  soru: Toplam kaç müşteri var?
+  referans_sql: SELECT COUNT(*) FROM customers
+  zorluk: kolay
+  kategori: filtreleme
+  sirali: false
+
+- id: 2
+  soru: Ankara'da yaşayan kaç müşteri var?
+  referans_sql: SELECT COUNT(*) FROM customers WHERE city = 'Ankara'
+  zorluk: kolay
+  kategori: filtreleme
+  sirali: false
+
+- id: 3
+  soru: Liste fiyatı 1000 TL'nin üzerinde olan ürünlerin adı ve fiyatı nedir?
+  referans_sql: SELECT name, price FROM products WHERE price > 1000
+  zorluk: kolay
+  kategori: filtreleme
+  sirali: false
+
+- id: 4
+  soru: Kategorilere göre ürün sayısı nedir?
+  referans_sql: SELECT category, COUNT(*) FROM products GROUP BY category
+  zorluk: kolay
+  kategori: gruplama
+  sirali: false
+
+- id: 5
+  soru: Sipariş durumlarına göre sipariş sayısı nedir?
+  referans_sql: SELECT status, COUNT(*) FROM orders GROUP BY status
+  zorluk: kolay
+  kategori: gruplama
+  sirali: false
+
+- id: 6
+  soru: Durumu ne olursa olsun en az 10 sipariş vermiş kaç müşteri var?
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id HAVING COUNT(*) >= 10)
+  zorluk: orta
+  kategori: gruplama
+  sirali: false
+
+- id: 7
+  soru: Kategorilere göre toplam ciro nedir?
+  referans_sql: >-
+    SELECT p.category, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'tamamlandi' GROUP BY p.category
+  zorluk: orta
+  kategori: join
+  sirali: false
+
+- id: 8
+  soru: En çok ciro getiren 5 müşterinin adı ve toplam cirosu nedir? Çoktan aza sırala.
+  referans_sql: >-
+    SELECT c.name, SUM(oi.quantity * oi.unit_price) AS ciro
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id
+    WHERE o.status = 'tamamlandi' GROUP BY c.id ORDER BY ciro DESC LIMIT 5
+  zorluk: orta
+  kategori: join
+  sirali: true
+
+- id: 9
+  soru: Hiç sipariş vermemiş kaç müşteri var?
+  referans_sql: >-
+    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)
+  zorluk: orta
+  kategori: join
+  sirali: false
+
+- id: 10
+  soru: İstanbul'daki müşterilerin tamamlanan siparişlerinde, her kategoriden toplam kaç adet ürün satıldı?
+  referans_sql: >-
+    SELECT p.category, SUM(oi.quantity)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    JOIN customers c ON c.id = o.customer_id JOIN products p ON p.id = oi.product_id
+    WHERE c.city = 'İstanbul' AND o.status = 'tamamlandi' GROUP BY p.category
+  zorluk: zor
+  kategori: join
+  sirali: false
+
+- id: 11
+  soru: Geçen ay kaç sipariş verildi? Tüm durumları say.
+  referans_sql: SELECT COUNT(*) FROM orders WHERE strftime('%Y-%m', order_date) = '2026-10'
+  zorluk: kolay
+  kategori: tarih
+  sirali: false
+
+- id: 12
+  # 4, bilerek: 3. ve 4. ürün eşit (73 adet), "ilk 3" tek bir doğru cevaba sahip olmazdı.
+  soru: Geçen ay tamamlanan siparişlerde adet olarak en çok satılan 4 ürünün adı ve satış adedi nedir?
+  referans_sql: >-
+    SELECT p.name, SUM(oi.quantity) AS adet
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'tamamlandi' AND strftime('%Y-%m', o.order_date) = '2026-10'
+    GROUP BY p.id ORDER BY adet DESC LIMIT 4
+  zorluk: orta
+  kategori: tarih
+  sirali: false
+
+- id: 13
+  soru: Son 3 tamamlanmış ayın her biri için toplam ciro nedir? Ayı YYYY-MM biçiminde göster, eskiden yeniye sırala.
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'tamamlandi' AND o.order_date >= '2026-08-01' AND o.order_date < '2026-11-01'
+    GROUP BY ay ORDER BY ay
+  zorluk: zor
+  kategori: tarih
+  sirali: true
+
+- id: 14
+  soru: 2026 yılında aylara göre toplam ciro nedir? Ayı YYYY-MM biçiminde göster ve eskiden yeniye sırala.
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'tamamlandi' AND strftime('%Y', o.order_date) = '2026'
+    GROUP BY ay ORDER BY ay
+  zorluk: orta
+  kategori: tarih
+  sirali: true
+
+- id: 15
+  # Sıfır satışlı ürünler de sonuçta olmalı: satış kalemlerinden başlayan bir INNER JOIN onları göremez.
+  soru: 2 Ekim 2026'da tamamlanan siparişlerde 3 adetten az satılan ürünlerin adı ve satış adedi nedir?
+  referans_sql: >-
+    SELECT p.name, COALESCE(SUM(t.quantity), 0) AS adet FROM products p
+    LEFT JOIN (SELECT oi.product_id, oi.quantity FROM order_items oi JOIN orders o ON o.id = oi.order_id
+               WHERE o.status = 'tamamlandi' AND o.order_date = '2026-10-02') t ON t.product_id = p.id
+    GROUP BY p.id HAVING adet < 3
+  zorluk: zor
+  kategori: tarih
+  sirali: false
+
+- id: 16
+  soru: Tüm siparişlerin yüzde kaçı iade edildi?
+  referans_sql: SELECT 100.0 * SUM(status = 'iade') / COUNT(*) FROM orders
+  zorluk: orta
+  kategori: oran
+  sirali: false
+
+- id: 17
+  soru: Müşterilerinin siparişlerinde iade oranı en yüksek olan şehir hangisi? Şehri ve iade oranını yüzde olarak göster.
+  referans_sql: >-
+    SELECT c.city, 100.0 * SUM(o.status = 'iade') / COUNT(*) AS oran
+    FROM orders o JOIN customers c ON c.id = o.customer_id
+    GROUP BY c.city ORDER BY oran DESC LIMIT 1
+  zorluk: zor
+  kategori: oran
+  sirali: false
+
+- id: 18
+  soru: Her kategori için, o kategoriden en az bir ürün içeren siparişlerin yüzde kaçı iade edildi?
+  referans_sql: >-
+    SELECT p.category, 100.0 * COUNT(DISTINCT CASE WHEN o.status = 'iade' THEN o.id END) / COUNT(DISTINCT o.id)
+    FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
+    GROUP BY p.category
+  zorluk: zor
+  kategori: oran
+  sirali: false
+
+- id: 19
+  soru: Müşterilerin e-posta adresleri neler?
+  referans_sql: null
+  zorluk: kolay
+  kategori: cevaplanamaz
+  sirali: false
+
+- id: 20
+  soru: Hangi ürünün depoda kaç adet stoğu kaldı?
+  referans_sql: null
+  zorluk: orta
+  kategori: cevaplanamaz
+  sirali: false

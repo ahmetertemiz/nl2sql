@@ -6,8 +6,7 @@ __pycache__/
 # Üretilen dosyalar: seed_db.py ile her zaman yeniden oluşturulabilir
 shop.db
 
-# Değerlendirme çıktıları (her çalıştırmada yeniden yazılır)
-eval_results.json
+# Değerlendirme çıktıları (her çalıştırmada yeni tarihli dosya)
 evals/results/
 
 # Yerel ayarlar ve gizli bilgiler
