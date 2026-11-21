@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 import seed_db
+from charts import make_chart
 from nl2sql import answer, get_schema, list_columns
 
 DB_PATH = Path(__file__).parent / "shop.db"
@@ -142,8 +143,8 @@ if last:
         else:
             x, y = result["x"], result["y"]
             if result["chart"] != "none" and x in df.columns and y in df.columns:
-                chart = st.bar_chart if result["chart"] == "bar" else st.line_chart
-                chart(df, x=x, y=y)
+                # Altair: çubuklar SQL'deki sırayla, tarih ekseni kronolojik (bkz. charts.py)
+                st.altair_chart(make_chart(df, result["chart"], x, y), width="stretch")
             st.dataframe(df, hide_index=True)
             st.download_button("CSV indir", df.to_csv(index=False).encode("utf-8-sig"),
                                "sonuc.csv", "text/csv")

@@ -3,6 +3,8 @@
 Gerçek model çağrısı yapılmaz: nl2sql.answer sahte bir fonksiyonla değiştirilir
 ve kaç kez çağrıldığı sayılır. API anahtarı gerektirmez.
 """
+import json
+
 import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -63,6 +65,22 @@ def test_sidebar_change_does_not_call_model_and_marks_result_stale(calls):
     submit_button(at).click().run()                          # yeniden gönderince güncel ayarlar gider
     assert len(calls) == 2 and calls[1]["value_columns"] == {"customers": ["city"]}
     assert not any("önceki" in w.value for w in at.warning)
+
+
+def test_chart_is_drawn_with_altair_in_sql_order(monkeypatch):
+    df = pd.DataFrame({"urun": ["Powerbank", "Akıllı Saat"], "adet": [87, 62]})
+    monkeypatch.setattr(nl2sql, "answer", lambda *a, **k: {
+        "sql": "SELECT 1", "explanation": "", "chart": "bar", "x": "urun", "y": "adet",
+        "df": df, "error": None})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    at = open_app()
+    at.text_input(key="question").input("En çok satanlar?")
+    submit_button(at).click().run()
+    assert not at.exception
+    charts = at.get("vega_lite_chart")
+    assert len(charts) == 1
+    spec = json.loads(charts[0].proto.spec)
+    assert spec["encoding"]["x"]["sort"] is None   # alfabetik değil, SQL sırası
 
 
 def test_example_button_calls_model(calls):

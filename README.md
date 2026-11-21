@@ -22,6 +22,8 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 | `seed_db.py` | 200 müşteri, 14 ürün, 1500 siparişlik örnek veritabanını üretir |
 | `nl2sql.py` | Çekirdek mantık: şema okuma, SQL üretme, güvenlik kontrolü, çalıştırma |
 | `app.py` | Streamlit arayüzü |
+| `charts.py` | Altair grafikleri: çubuklar SQL'deki satır sırasıyla, tarih ekseni kronolojik |
+| `test_charts.py` | Grafik sıralama testleri |
 | `test_nl2sql.py` | API anahtarı gerektirmeyen testler (`python -m pytest -q`) |
 | `eval_set.json` | 21 soruluk değerlendirme seti: soru + referans SQL |
 | `evaluate.py` | Soruları modele sorar, sonucu referansla karşılaştırır, doğruluk oranını yazar |
