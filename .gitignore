@@ -1,0 +1,15 @@
+# Sanal ortam ve Python önbellekleri
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Üretilen dosyalar: seed_db.py ile her zaman yeniden oluşturulabilir
+shop.db
+
+# Değerlendirme çıktıları (her çalıştırmada yeniden yazılır)
+eval_results.json
+evals/results/
+
+# Yerel ayarlar ve gizli bilgiler
+.claude/settings.local.json
+.env

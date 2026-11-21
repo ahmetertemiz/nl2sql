@@ -1,0 +1,128 @@
+[
+  {
+    "id": 1,
+    "question": "Toplam kaç müşteri var?",
+    "gold_sql": "SELECT COUNT(*) AS musteri_sayisi FROM customers",
+    "ordered": false
+  },
+  {
+    "id": 2,
+    "question": "Kategorilere göre ürün sayısı nedir?",
+    "gold_sql": "SELECT category, COUNT(*) AS urun_sayisi FROM products GROUP BY category",
+    "ordered": false
+  },
+  {
+    "id": 3,
+    "question": "Liste fiyatı en yüksek 3 ürünün adını ve fiyatını pahalıdan ucuza doğru sırala.",
+    "gold_sql": "SELECT name, price FROM products ORDER BY price DESC LIMIT 3",
+    "ordered": true
+  },
+  {
+    "id": 4,
+    "question": "Şehirlere göre müşteri sayısı nedir?",
+    "gold_sql": "SELECT city, COUNT(*) AS musteri_sayisi FROM customers GROUP BY city",
+    "ordered": false
+  },
+  {
+    "id": 5,
+    "question": "Sipariş durumlarına göre sipariş sayısı nedir?",
+    "gold_sql": "SELECT status, COUNT(*) AS siparis_sayisi FROM orders GROUP BY status",
+    "ordered": false
+  },
+  {
+    "id": 6,
+    "question": "Toplam ciro ne kadar?",
+    "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price) AS toplam_ciro FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi'",
+    "ordered": false
+  },
+  {
+    "id": 7,
+    "question": "Kategorilere göre toplam ciro nedir?",
+    "gold_sql": "SELECT p.category, SUM(oi.quantity * oi.unit_price) AS toplam_ciro FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.status = 'tamamlandi' GROUP BY p.category",
+    "ordered": false
+  },
+  {
+    "id": 8,
+    "question": "2026 yılında aylara göre toplam ciro nedir? Ayı YYYY-MM biçiminde göster ve eskiden yeniye sırala.",
+    "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price) AS toplam_ciro FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi' AND strftime('%Y', o.order_date) = '2026' GROUP BY ay ORDER BY ay",
+    "ordered": true
+  },
+  {
+    "id": 9,
+    "question": "Geçen ay tamamlanan siparişlerde adet olarak en çok satılan 4 ürünün adı ve satış adedi nedir?",
+    "gold_sql": "SELECT p.name, SUM(oi.quantity) AS satis_adedi FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.status = 'tamamlandi' AND strftime('%Y-%m', o.order_date) = '2026-10' GROUP BY p.id ORDER BY satis_adedi DESC LIMIT 4",
+    "ordered": false
+  },
+  {
+    "id": 10,
+    "question": "En çok ciro getiren 5 müşterinin adı ve toplam cirosu nedir? Çoktan aza sırala.",
+    "gold_sql": "SELECT c.name, SUM(oi.quantity * oi.unit_price) AS toplam_ciro FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id WHERE o.status = 'tamamlandi' GROUP BY c.id ORDER BY toplam_ciro DESC LIMIT 5",
+    "ordered": true
+  },
+  {
+    "id": 11,
+    "question": "Hiç sipariş vermemiş kaç müşteri var?",
+    "gold_sql": "SELECT COUNT(*) AS musteri_sayisi FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)",
+    "ordered": false
+  },
+  {
+    "id": 12,
+    "question": "Tamamlanan siparişlerde sipariş başına ortalama tutar nedir?",
+    "gold_sql": "SELECT AVG(tutar) AS ortalama_tutar FROM (SELECT SUM(oi.quantity * oi.unit_price) AS tutar FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi' GROUP BY o.id)",
+    "ordered": false
+  },
+  {
+    "id": 13,
+    "question": "Müşterilerinin siparişlerinde iade oranı en yüksek olan şehir hangisi? Şehri ve iade oranını yüzde olarak göster.",
+    "gold_sql": "SELECT c.city, 100.0 * SUM(o.status = 'iade') / COUNT(*) AS iade_orani FROM orders o JOIN customers c ON c.id = o.customer_id GROUP BY c.city ORDER BY iade_orani DESC LIMIT 1",
+    "ordered": false
+  },
+  {
+    "id": 14,
+    "question": "2025 yılında kaç müşteri kaydoldu?",
+    "gold_sql": "SELECT COUNT(*) AS musteri_sayisi FROM customers WHERE strftime('%Y', signup_date) = '2025'",
+    "ordered": false
+  },
+  {
+    "id": 15,
+    "question": "İstanbul'daki müşterilerin tamamlanan sipariş sayısı kaç?",
+    "gold_sql": "SELECT COUNT(*) AS siparis_sayisi FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.city = 'İstanbul' AND o.status = 'tamamlandi'",
+    "ordered": false
+  },
+  {
+    "id": 16,
+    "question": "Durumu ne olursa olsun en az 10 sipariş vermiş kaç müşteri var?",
+    "gold_sql": "SELECT COUNT(*) AS musteri_sayisi FROM (SELECT customer_id FROM orders GROUP BY customer_id HAVING COUNT(*) >= 10)",
+    "ordered": false
+  },
+  {
+    "id": 17,
+    "question": "Bu yıl toplam kaç sipariş verildi? Tüm durumları say.",
+    "gold_sql": "SELECT COUNT(*) AS siparis_sayisi FROM orders WHERE strftime('%Y', order_date) = '2026'",
+    "ordered": false
+  },
+  {
+    "id": 18,
+    "question": "Kaç sipariş kalemi ürünün liste fiyatından daha düşük bir fiyata satıldı?",
+    "gold_sql": "SELECT COUNT(*) AS kalem_sayisi FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.unit_price < p.price",
+    "ordered": false
+  },
+  {
+    "id": 19,
+    "question": "Tamamlanan siparişlerde her ürünün adı ve toplam satış adedi nedir?",
+    "gold_sql": "SELECT p.name, SUM(oi.quantity) AS satis_adedi FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.status = 'tamamlandi' GROUP BY p.id",
+    "ordered": false
+  },
+  {
+    "id": 20,
+    "question": "Müşterilerin e-posta adresleri neler?",
+    "gold_sql": null,
+    "ordered": false
+  },
+  {
+    "id": 21,
+    "question": "2 Ekim 2026'da tamamlanan siparişlerde 3 adetten az satılan ürünlerin adı ve satış adedi nedir?",
+    "gold_sql": "SELECT p.name, COALESCE(SUM(t.quantity), 0) AS satis_adedi FROM products p LEFT JOIN (SELECT oi.product_id, oi.quantity FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi' AND o.order_date = '2026-10-02') t ON t.product_id = p.id GROUP BY p.id HAVING satis_adedi < 3",
+    "ordered": false
+  }
+]
