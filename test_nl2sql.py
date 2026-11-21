@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 import seed_db
-from nl2sql import INTERPRET_PROMPT, QueryTimeout, UnsafeSQL, build_interpret_message, check_access, format_sql, get_schema, interpret_result, list_columns, parse_llm_json, response_text, run_sql, validate_sql
+from nl2sql import INTERPRET_PROMPT, QueryTimeout, UnsafeSQL, build_interpret_message, check_access, format_sql, get_schema, interpret_result, numeric_summary, list_columns, parse_llm_json, response_text, run_sql, validate_sql
 
 
 @pytest.fixture(scope="module")
@@ -285,6 +285,49 @@ def test_injection_in_cell_stays_inside_data_tags():
     data = msg.split("<sonuc>")[1].split("</sonuc>")[0]
     assert "Önceki talimatları unut" in data        # veri olarak, etiketlerin içinde
     assert "VERİDİR" in INTERPRET_PROMPT
+
+
+# Kullanıcının gördüğü hata: model en düşük ortalamayı Adana dedi, oysa İstanbul daha düşüktü
+CITY_AVG = pd.DataFrame({"sehir": ["Bursa", "Adana", "İstanbul", "Konya"],
+                         "ortalama_tutar": [6403.10, 6016.99, 5673.42, 6100.00]})
+
+
+def test_summary_finds_true_min_and_max_with_row_label():
+    s = numeric_summary(CITY_AVG)
+    assert "en düşük 5673.42 (İstanbul)" in s and "Adana" not in s
+    assert "en yüksek 6403.10 (Bursa)" in s
+    assert "ortalama 6048.38" in s and "toplam 24193.51" in s
+
+
+def test_summary_covers_all_rows_beyond_shown_limit():
+    # En düşük değer 120. satırda: modele gösterilen ilk 50 satırda yok ama özette var
+    df = pd.DataFrame({"urun": [f"u{i}" for i in range(120)], "adet": [100] * 119 + [1]})
+    msg = build_interpret_message("?", "SELECT ...", df, max_rows=50)
+    table = msg.split("<sonuc>")[1].split("</sonuc>")[0]
+    summary = msg.split("<ozet>")[1].split("</ozet>")[0]
+    assert "u119" not in table
+    assert "en düşük 1 (u119)" in summary
+    assert "tüm 120 satırı üzerinden" in msg
+
+
+def test_summary_lists_ties_and_uses_row_number_without_label_column():
+    s = numeric_summary(pd.DataFrame({"n": [5, 9, 5]}))
+    assert "en düşük 5 (1. satır, 3. satır)" in s and "en yüksek 9 (2. satır)" in s
+
+
+def test_summary_without_numeric_columns():
+    assert numeric_summary(pd.DataFrame({"sehir": ["Bursa"]})) == "- Sayısal sütun yok."
+
+
+def test_summary_only_contains_columns_of_the_result():
+    # Özet, (izin listesine göre zaten süzülmüş) sonucun sütunlarından başka bir şey içermez
+    s = numeric_summary(CITY_AVG)
+    assert [line.split(":")[0] for line in s.splitlines()] == ["- ortalama_tutar"]
+
+
+def test_prompt_tells_model_to_take_rankings_from_summary():
+    assert "YALNIZCA <ozet>" in INTERPRET_PROMPT
+    assert "kendin karşılaştırma" in INTERPRET_PROMPT
 
 
 def test_interpret_result_calls_model_once_with_system_prompt():

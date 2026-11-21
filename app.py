@@ -73,12 +73,13 @@ with st.sidebar:
         "Sonucu düz dille yorumla",
         key="interpret_on",
         help=(f"Açıkken sonucun altında 'Yorumla' düğmesi çıkar. Basınca sonucun ilk "
-              f"{INTERPRET_MAX_ROWS} satırı modele gönderilir ve düz Türkçe bir yorum istenir. "
-              "Her yorum ayrı, ücretli bir model çağrısıdır."),
+              f"{INTERPRET_MAX_ROWS} satırı ve tüm sonucun sayısal özeti (en düşük/en yüksek "
+              "değer ve satırı, ortalama, toplam) modele gönderilir ve düz Türkçe bir yorum "
+              "istenir. Her yorum ayrı, ücretli bir model çağrısıdır."),
     )
     if interpret_on:
-        st.warning(f"'Yorumla'ya basınca sonucun ilk {INTERPRET_MAX_ROWS} satırı modele gönderilir.",
-                   icon=":material/info:")
+        st.warning(f"'Yorumla'ya basınca sonucun ilk {INTERPRET_MAX_ROWS} satırı ve tüm sonucun "
+                   "sayısal özeti modele gönderilir.", icon=":material/info:")
 
     with st.expander("Modele gönderilen şema", icon=":material/visibility:"):
         st.code(get_schema(DB_PATH, allowed, value_columns) or "-- Henüz bir sütun seçilmedi",
@@ -182,3 +183,4 @@ if last:
                     st.rerun()  # düğme devre dışı görünsün
             if interpret_on and last.get("comment"):
                 st.success(last["comment"], icon=":material/chat:")
+                st.caption("Yorum yapay zeka tarafından üretildi; sayıları tabloyla karşılaştır.")

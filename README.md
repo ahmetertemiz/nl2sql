@@ -74,10 +74,12 @@ Setteki sorular kategorilere ayrılır: filtreleme, gruplama, çoklu JOIN, tarih
    - Ayrıştırıcının kaçırabileceği her şeye karşı SQLite yetkilendiricisi (`set_authorizer`) aynı kuralı veritabanı içinde, sorgu çalışmadan uygular.
    - Bağlantı salt-okunur açılır. Her sorgu en fazla 5 saniye çalışabilir (`NL2SQL_QUERY_TIMEOUT` ile değiştirilebilir); süreyi aşan sorgu durdurulur.
 5. Sorgu hata verirse hata mesajı modele geri gönderilir ve bir kez daha denenir. İzinsiz erişim denemesi ve süre aşımı yeniden denenmez, kullanıcıya gösterilir.
-6. İsteğe bağlı yorum: kenar çubuğundaki "Sonucu düz dille yorumla" anahtarı varsayılan olarak kapalıdır. Açılırsa sonucun altında "Yorumla" düğmesi çıkar. Basınca ikinci bir model çağrısı soruyu, SQL'i ve sonucun ilk 50 satırını alır ve 2-4 cümlelik bir yorum döndürür.
+6. İsteğe bağlı yorum: kenar çubuğundaki "Sonucu düz dille yorumla" anahtarı varsayılan olarak kapalıdır. Açılırsa sonucun altında "Yorumla" düğmesi çıkar. Basınca ikinci bir model çağrısı soruyu, SQL'i, sonucun ilk 50 satırını ve tüm sonucun sayısal özetini alır ve 2-4 cümlelik bir yorum döndürür.
    - Bu, sorgu **sonucunun** (gerçek veri satırlarının) modele gittiği tek yerdir; bu yüzden kullanıcı açıkça istemedikçe çalışmaz.
    - Sonuç zaten izin listesine göre süzülmüştür: gizli sütunlar yorum için de gönderilmez.
-   - Hücre içerikleri `<sonuc>` etiketi içinde veri olarak işaretlenir; model içlerindeki talimat benzeri metinleri uygulamaz.
+   - Tablonun yanında pandas ile hesaplanmış bir özet gönderilir: her sayısal sütunun en düşük/en yüksek değeri (hangi satırda olduğuyla), ortalaması ve toplamı. Özet tablo kesilse bile tüm sonucu kapsar. Model en yüksek/en düşük ve sıralama iddialarını yalnızca bu özetten alır; böylece sayıları kendisi karşılaştırırken yaptığı hatalar (ör. en düşüğü yanlış satır sanmak) önlenir.
+   - Hücre içerikleri `<sonuc>` ve `<ozet>` etiketleri içinde veri olarak işaretlenir; model içlerindeki talimat benzeri metinleri uygulamaz.
+   - Yorumun altında "Yorum yapay zeka tarafından üretildi; sayıları tabloyla karşılaştır." notu gösterilir.
    - Sorgu yeniden çalışmaz ve aynı sonuç için yorum bir kez alınır.
 
 ## Sonraki adımlar

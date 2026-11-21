@@ -124,6 +124,7 @@ def asked(at: AppTest) -> AppTest:
 def test_interpret_off_by_default_no_button_no_call(calls, comments):
     at = asked(open_app())
     assert not any(b.label == "Yorumla" for b in at.button)
+    assert not any("yapay zeka" in c.value for c in at.main.caption)
     assert comments == []
 
 
@@ -137,6 +138,8 @@ def test_interpret_on_shows_warning_and_button_and_calls_once(calls, comments):
     assert len(comments) == 1 and comments[0]["question"] == "İstanbul'da kaç müşteri var?"
     assert len(calls) == 1                                   # sorgu yeniden çalışmadı
     assert any("Sahte yorum" in s.value for s in at.success)
+    assert any("yapay zeka tarafından üretildi; sayıları tabloyla karşılaştır" in c.value
+               for c in at.main.caption)
     assert next(b for b in at.button if b.label == "Yorumla").disabled  # ikinci kez ücret yok
 
 
