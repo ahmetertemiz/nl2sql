@@ -1,0 +1,225 @@
+# AYRI TEST SETİ (holdout) — yalnızca ÖLÇMEK içindir.
+#
+# Kurallar:
+#   - Bu setteki başarısızlıklara bakarak SYSTEM_PROMPT DEĞİŞTİRİLMEZ. Prompt'u bu sete göre
+#     ayarlamak, sınava sorulara bakarak çalışmak olur; ölçüm anlamını yitirir.
+#   - Sorular gerçek kullanıcı gibi yazılmıştır: belirsiz ifadeler, yazım hataları, günlük dil,
+#     iki adımlı mantık, pencere fonksiyonları.
+#   - "yorum": belirsiz sorularda referans SQL'in hangi yorumu seçtiği. Başarısızlıkları
+#     sınıflandırırken (model hatası / belirsiz soru / hatalı referans) buna bakılır.
+#
+# Alanlar questions.yaml ile aynıdır (soru, referans_sql, zorluk, kategori, sirali) + yorum.
+# "Bugün" 2026-11-20. Ciro/harcama: yalnızca tamamlanan siparişler, quantity * unit_price.
+
+- id: 101
+  soru: en iyi 5 müşterimiz kimler
+  referans_sql: >-
+    SELECT c.name, SUM(oi.quantity * oi.unit_price) AS ciro
+    FROM customers c JOIN orders o ON o.customer_id = c.id JOIN order_items oi ON oi.order_id = o.id
+    WHERE o.status = 'tamamlandi' GROUP BY c.id ORDER BY ciro DESC LIMIT 5
+  yorum: '"En iyi" = tamamlanan siparişlerdeki toplam harcama. Sipariş sayısına göre de okunabilir.'
+  zorluk: orta
+  kategori: belirsiz
+  sirali: false
+
+- id: 102
+  soru: satışlar son 6 ayda nasıl gidiyo, aylık ciroyu görmek istiyorum
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price)
+    FROM orders o JOIN order_items oi ON oi.order_id = o.id
+    WHERE o.status = 'tamamlandi' AND o.order_date >= '2026-06-01'
+    GROUP BY ay
+  yorum: '"Son 6 ay" = içinde bulunulan Kasım dahil Haziran-Kasım. Kasım yarım ay; tam aylar (Mayıs-Ekim) da okunabilir.'
+  zorluk: orta
+  kategori: belirsiz
+  sirali: false
+
+- id: 103
+  soru: istanbuldaki musterilerin toplam harcamasi ne kadar
+  referans_sql: >-
+    SELECT SUM(oi.quantity * oi.unit_price)
+    FROM customers c JOIN orders o ON o.customer_id = c.id JOIN order_items oi ON oi.order_id = o.id
+    WHERE c.city = 'İstanbul' AND o.status = 'tamamlandi'
+  yorum: Türkçe karaktersiz yazım; veritabanındaki değer 'İstanbul'.
+  zorluk: kolay
+  kategori: yazim-hatasi
+  sirali: false
+
+- id: 104
+  soru: ortalamanın üstünde harcama yapan kaç müşteri var?
+  referans_sql: >-
+    WITH h AS (SELECT o.customer_id, SUM(oi.quantity * oi.unit_price) AS toplam
+               FROM orders o JOIN order_items oi ON oi.order_id = o.id
+               WHERE o.status = 'tamamlandi' GROUP BY o.customer_id)
+    SELECT COUNT(*) FROM h WHERE toplam > (SELECT AVG(toplam) FROM h)
+  yorum: Ortalama = müşteri başına toplam harcamanın ortalaması (harcaması olan müşteriler arasında).
+  zorluk: zor
+  kategori: iki-adim
+  sirali: false
+
+- id: 105
+  soru: Ekimde ciro eylüle göre yüzde kaç arttı?
+  referans_sql: >-
+    WITH m AS (SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price) AS ciro
+               FROM orders o JOIN order_items oi ON oi.order_id = o.id
+               WHERE o.status = 'tamamlandi' GROUP BY ay)
+    SELECT 100.0 * (e.ciro - s.ciro) / s.ciro FROM m e, m s WHERE e.ay = '2026-10' AND s.ay = '2026-09'
+  zorluk: orta
+  kategori: iki-adim
+  sirali: false
+
+- id: 106
+  soru: 2026'da her ay ne kadar ciro yaptık, bir de yılbaşından beri birikimli toplamı yanına koy
+  referans_sql: >-
+    SELECT ay, ciro, SUM(ciro) OVER (ORDER BY ay) AS kumulatif FROM (
+      SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price) AS ciro
+      FROM orders o JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.status = 'tamamlandi' AND o.order_date >= '2026-01-01' GROUP BY ay)
+    ORDER BY ay
+  zorluk: zor
+  kategori: pencere
+  sirali: true
+
+- id: 107
+  soru: her kategorinin en çok satan ürünü hangisi? adet olarak
+  referans_sql: >-
+    SELECT category, name, adet FROM (
+      SELECT p.category, p.name, SUM(oi.quantity) AS adet,
+             RANK() OVER (PARTITION BY p.category ORDER BY SUM(oi.quantity) DESC) AS sira
+      FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+      WHERE o.status = 'tamamlandi' GROUP BY p.id)
+    WHERE sira = 1
+  yorum: Tamamlanan siparişler. Tüm durumlar sayılırsa sonuç değişebilir.
+  zorluk: zor
+  kategori: pencere
+  sirali: false
+
+- id: 108
+  soru: En çok sipariş veren müşterimiz kim, kaç siparişi var?
+  referans_sql: >-
+    SELECT c.name, COUNT(*) AS n FROM orders o JOIN customers c ON c.id = o.customer_id
+    GROUP BY c.id ORDER BY n DESC LIMIT 1
+  yorum: >-
+    Aynı adı taşıyan müşteriler var. Doğru cevap Emre Demir (15). Ada göre gruplamak 8 farklı
+    "Zeynep Kaya"yı birleştirip 62 sipariş gösterir. Tüm durumlar sayılır.
+  zorluk: orta
+  kategori: ayni-ad
+  sirali: false
+
+- id: 109
+  soru: kaç farklı müşteri en az bir kere iade yaptı
+  referans_sql: SELECT COUNT(DISTINCT customer_id) FROM orders WHERE status = 'iade'
+  yorum: Doğru cevap 59. Farklı AD saymak (COUNT(DISTINCT name)) 41 verir.
+  zorluk: orta
+  kategori: ayni-ad
+  sirali: false
+
+- id: 110
+  soru: bu ay şu ana kadar kaç tane sipariş geldi
+  referans_sql: SELECT COUNT(*) FROM orders WHERE order_date >= '2026-11-01' AND order_date <= '2026-11-20'
+  yorum: Tüm durumlar ("sipariş geldi" iptalleri de kapsar).
+  zorluk: kolay
+  kategori: gunluk-dil
+  sirali: false
+
+- id: 111
+  soru: hafta sonları mı daha çok sipariş alıyoruz hafta içi mi
+  referans_sql: >-
+    SELECT COUNT(*) FROM orders GROUP BY strftime('%w', order_date) IN ('0', '6')
+  yorum: >-
+    Toplam sipariş sayısı (tüm durumlar), hafta içi ve hafta sonu iki satır. Referans yalnızca
+    sayıları döndürür; modelin etiket sütunu fazladan sütun sayılır. Gün başına ortalama da okunabilir.
+  zorluk: orta
+  kategori: belirsiz
+  sirali: false
+
+- id: 112
+  soru: iptal edilen siparişler en çok hangi şehirden?
+  referans_sql: >-
+    SELECT c.city, COUNT(*) AS n FROM orders o JOIN customers c ON c.id = o.customer_id
+    WHERE o.status = 'iptal' GROUP BY c.city ORDER BY n DESC LIMIT 1
+  zorluk: kolay
+  kategori: gunluk-dil
+  sirali: false
+
+- id: 113
+  soru: hiç iade yapmamış ama en az 5 kez sipariş vermiş kaç müşteri var
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id
+                          HAVING COUNT(*) >= 5 AND SUM(status = 'iade') = 0)
+  yorum: Sipariş sayısına tüm durumlar dahil.
+  zorluk: orta
+  kategori: iki-adim
+  sirali: false
+
+- id: 114
+  soru: Her şehirde en çok harcama yapan müşteri kim?
+  referans_sql: >-
+    SELECT city, name, ciro FROM (
+      SELECT c.city, c.name, SUM(oi.quantity * oi.unit_price) AS ciro,
+             RANK() OVER (PARTITION BY c.city ORDER BY SUM(oi.quantity * oi.unit_price) DESC) AS sira
+      FROM customers c JOIN orders o ON o.customer_id = c.id JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.status = 'tamamlandi' GROUP BY c.id)
+    WHERE sira = 1
+  zorluk: zor
+  kategori: pencere
+  sirali: false
+
+- id: 115
+  soru: ortalama sepet kaç ürün oluyor
+  referans_sql: >-
+    SELECT AVG(adet) FROM (SELECT order_id, SUM(quantity) AS adet FROM order_items GROUP BY order_id)
+  yorum: >-
+    Sipariş başına toplam adet, tüm siparişler. "Kaç farklı ürün" (kalem sayısı) veya yalnızca
+    tamamlanan siparişler olarak da okunabilir.
+  zorluk: orta
+  kategori: belirsiz
+  sirali: false
+
+- id: 116
+  soru: müşteriler kayıt olduktan sonra ilk siparişlerini ortalama kaç günde veriyor?
+  referans_sql: >-
+    SELECT AVG(gun) FROM (
+      SELECT julianday(MIN(o.order_date)) - julianday(c.signup_date) AS gun
+      FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id)
+  yorum: İlk sipariş = durumu ne olursa olsun en erken sipariş.
+  zorluk: zor
+  kategori: iki-adim
+  sirali: false
+
+- id: 117
+  soru: masa lambasi en cok hangi ay satildi
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity) AS adet
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE p.name = 'Masa Lambası' AND o.status = 'tamamlandi'
+    GROUP BY ay ORDER BY adet DESC LIMIT 1
+  yorum: Adet olarak, tamamlanan siparişler, ay = YYYY-MM.
+  zorluk: orta
+  kategori: yazim-hatasi
+  sirali: false
+
+- id: 118
+  soru: müşterilerimizin yaş ortalaması kaç?
+  referans_sql: null
+  zorluk: kolay
+  kategori: cevaplanamaz
+  sirali: false
+
+- id: 119
+  soru: en çok kullanılan indirim kodu hangisi
+  referans_sql: null
+  yorum: Bazı kalemler liste fiyatının altında satılmış (unit_price < price) ama indirim KODU bilgisi yok.
+  zorluk: orta
+  kategori: cevaplanamaz
+  sirali: false
+
+- id: 120
+  soru: Teslimat adresi müşterinin kayıtlı şehrinden farklı olan kaç sipariş var?
+  referans_sql: null
+  yorum: >-
+    Şemada var gibi görünen ama olmayan bilgi: customers.city var, ama siparişin teslimat
+    adresi/şehri yok. Model city'yi teslimat şehri sanabilir.
+  zorluk: zor
+  kategori: cevaplanamaz
+  sirali: false

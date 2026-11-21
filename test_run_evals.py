@@ -75,6 +75,33 @@ def test_gold_sql_passes_itself(db, item):
     assert evaluate_one(item, db, fake_model(item["referans_sql"] or ""))["gecti"]
 
 
+HOLDOUT = load_questions(Path(__file__).parent / "evals" / "holdout.yaml")
+
+
+def test_holdout_shape():
+    assert len(HOLDOUT) == 20 and len({q["id"] for q in HOLDOUT}) == 20
+    assert not {q["id"] for q in HOLDOUT} & {q["id"] for q in QUESTIONS}  # id'ler çakışmasın
+    assert sum(q["referans_sql"] is None for q in HOLDOUT) == 3
+    assert {"pencere", "ayni-ad", "iki-adim", "belirsiz", "yazim-hatasi"} <= {q["kategori"] for q in HOLDOUT}
+
+
+@pytest.mark.parametrize("item", HOLDOUT, ids=[str(q["id"]) for q in HOLDOUT])
+def test_holdout_gold_sql_passes_itself(db, item):
+    assert evaluate_one(item, db, fake_model(item["referans_sql"] or ""))["gecti"]
+
+
+def test_grouping_by_name_fails_same_name_questions(db):
+    # Aynı adı taşıyan müşteriler: ada göre gruplamak / saymak yanlış cevap verir
+    q108 = next(q for q in HOLDOUT if q["id"] == 108)
+    by_name = ("SELECT c.name, COUNT(*) AS n FROM orders o JOIN customers c ON c.id = o.customer_id "
+               "GROUP BY c.name ORDER BY n DESC LIMIT 1")
+    assert not evaluate_one(q108, db, fake_model(by_name))["gecti"]
+    q109 = next(q for q in HOLDOUT if q["id"] == 109)
+    distinct_name = ("SELECT COUNT(DISTINCT c.name) FROM orders o JOIN customers c "
+                     "ON c.id = o.customer_id WHERE o.status = 'iade'")
+    assert not evaluate_one(q109, db, fake_model(distinct_name))["gecti"]
+
+
 def test_inner_join_that_drops_unsold_products_fails(db):
     # Satış kalemlerinden başlayan (INNER JOIN) sorgu, o gün hiç satılmayan ürünleri göremez
     item = next(q for q in QUESTIONS if q["id"] == 15)
