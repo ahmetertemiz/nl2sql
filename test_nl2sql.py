@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import seed_db
-from nl2sql import QueryTimeout, UnsafeSQL, get_schema, list_columns, parse_llm_json, response_text, run_sql, validate_sql
+from nl2sql import QueryTimeout, UnsafeSQL, check_access, get_schema, list_columns, parse_llm_json, response_text, run_sql, validate_sql
 
 
 @pytest.fixture(scope="module")
@@ -93,6 +93,74 @@ def test_count_star_and_case_insensitive_names_allowed(db):
 def test_disallowed_access_rejected(db, sql):
     with pytest.raises(UnsafeSQL, match="izin verilmeyen"):
         run_sql(db, sql, ALLOWED)
+
+
+# --- Ayrıştırıcı katmanı (sqlglot): SQLite'a hiç gitmeden reddetmeli -----------
+# Bu testler check_access'i tek başına çağırır; yetkilendirici devrede değildir.
+# Böylece iki katmanın her biri kendi başına doğrulanır.
+HIDDEN_ACCESS = {
+    "doğrudan seçme": "SELECT name FROM customers",
+    "SELECT *": "SELECT * FROM customers",
+    "tablo.*": "SELECT c.* FROM customers c",
+    "takma adla erişim": "SELECT c.name AS x FROM customers c",
+    "alt sorgu (WHERE)": "SELECT city FROM customers WHERE id IN "
+                         "(SELECT id FROM customers WHERE name LIKE 'A%')",
+    "alt sorgu (FROM)": "SELECT x FROM (SELECT name AS x FROM customers)",
+    "CTE": "WITH t AS (SELECT name FROM customers) SELECT * FROM t",
+    "ilişkili alt sorgu": "SELECT city FROM customers c WHERE EXISTS "
+                          "(SELECT 1 FROM orders o WHERE o.customer_id = c.id AND c.name = 'x')",
+    "ORDER BY": "SELECT c.city FROM customers c ORDER BY c.signup_date",
+    "takma ad gibi görünen gerçek sütun": "SELECT city AS name FROM customers WHERE name LIKE 'A%'",
+    "gizli tablo": "SELECT COUNT(*) FROM products",
+    "sqlite_master": "SELECT sql FROM sqlite_master",
+    "pragma fonksiyonu": "SELECT name FROM pragma_table_info('customers')",
+}
+
+
+@pytest.mark.parametrize("sql", HIDDEN_ACCESS.values(), ids=HIDDEN_ACCESS.keys())
+def test_parser_rejects_hidden_access(db, sql):
+    with pytest.raises(UnsafeSQL, match="izin verilmeyen"):
+        check_access(sql, ALLOWED, list_columns(db))
+
+
+def test_parser_names_the_hidden_column(db):
+    with pytest.raises(UnsafeSQL, match=r"customers\.name"):
+        check_access("SELECT c.name AS x FROM customers c", ALLOWED, list_columns(db))
+    with pytest.raises(UnsafeSQL, match=r"\* kullanılamaz"):
+        check_access("SELECT * FROM customers", ALLOWED, list_columns(db))
+
+
+# Aynı biçimdeki sorgular, yalnızca izinli sütunlarla yazılınca çalışmalı.
+ALLOWED_ACCESS = {
+    "doğrudan seçme": "SELECT city FROM customers",
+    "SELECT * (tüm sütunları açık tablo)": "SELECT * FROM customers",
+    "tablo.*": "SELECT c.* FROM customers c",
+    "takma adla erişim": "SELECT c.city AS x FROM customers c",
+    "alt sorgu (WHERE)": "SELECT city FROM customers WHERE id IN "
+                         "(SELECT customer_id FROM orders WHERE status = 'iade')",
+    "alt sorgu (FROM)": "SELECT x FROM (SELECT city AS x FROM customers)",
+    "CTE": "WITH t AS (SELECT city FROM customers) SELECT * FROM t",
+    "ilişkili alt sorgu": "SELECT COUNT(*) AS n FROM customers c WHERE NOT EXISTS "
+                          "(SELECT 1 FROM orders o WHERE o.customer_id = c.id)",
+    "ORDER BY takma ad": "SELECT city AS name FROM customers ORDER BY name",
+}
+FULL_CUSTOMERS = {**ALLOWED, "customers": ["id", "name", "city", "signup_date"]}
+
+
+@pytest.mark.parametrize("sql", ALLOWED_ACCESS.values(), ids=ALLOWED_ACCESS.keys())
+def test_same_shapes_with_allowed_columns_run(db, sql):
+    allowed = FULL_CUSTOMERS if "*" in sql else ALLOWED  # * yalnızca gizli sütunu olmayan tabloda
+    check_access(sql, allowed, list_columns(db))
+    assert len(run_sql(db, sql, allowed)) > 0
+
+
+def test_star_on_table_with_hidden_column_rejected_even_if_others_open(db):
+    # orders'ta order_date gizli: o tabloda * yasak, customers'ta (tamamı açık) serbest
+    allowed = {**FULL_CUSTOMERS}
+    with pytest.raises(UnsafeSQL):
+        run_sql(db, "SELECT o.* FROM orders o", allowed)
+    assert len(run_sql(db, "SELECT c.* FROM customers c JOIN orders o ON o.customer_id = c.id",
+                       allowed)) > 0
 
 
 def test_recursive_cte_allowed_with_allowlist(db):

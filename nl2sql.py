@@ -70,10 +70,14 @@ def _quote(name: str) -> str:
 def list_columns(db_path: Path) -> dict[str, list[str]]:
     """Her tablonun sütun adları; arayüzde izin listesini seçtirmek için."""
     with closing(_connect_ro(db_path)) as con:
-        tables = [r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-        )]
-        return {t: [r[1] for r in con.execute(f"PRAGMA table_info({_quote(t)})")] for t in tables}
+        return _columns(con)
+
+
+def _columns(con: sqlite3.Connection) -> dict[str, list[str]]:
+    tables = [r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )]
+    return {t: [r[1] for r in con.execute(f"PRAGMA table_info({_quote(t)})")] for t in tables}
 
 
 def _normalize(allowed: Allowed) -> dict[str, set[str]]:
@@ -179,6 +183,100 @@ def validate_sql(sql: str) -> str:
     return cleaned
 
 
+def _find_source(scope, alias: str):
+    """Bir sütunun önündeki takma adı (c.name -> c) bu kapsamda ya da dış kapsamlarda çöz.
+
+    Dış kapsamlara bakmak ilişkili alt sorgular içindir: WHERE EXISTS (... o.customer_id = c.id).
+    """
+    while scope is not None:
+        if alias in scope.sources:
+            return scope.sources[alias]
+        scope = scope.parent
+    return None
+
+
+def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> None:
+    """SQL'i ayrıştırıp (sqlglot) izin listesi dışında bir tablo/sütuna erişiyorsa reddeder.
+
+    Bu, çalıştırmadan ÖNCEKİ katmandır ve hangi sütunun sorun olduğunu açıkça söyler.
+    Arkasında yine SQLite yetkilendiricisi durur: ayrıştırıcının kaçırdığı bir şey
+    olsa bile veritabanı izinsiz okumayı reddeder.
+
+    schema: veritabanındaki gerçek tablolar ve TÜM sütunları (list_columns çıktısı).
+    """
+    import sqlglot
+    from sqlglot import exp
+    from sqlglot.errors import ParseError
+    from sqlglot.optimizer.qualify import qualify
+    from sqlglot.optimizer.scope import traverse_scope
+
+    ok = _normalize(allowed)
+    real = {t.lower(): {c.lower() for c in cols} for t, cols in schema.items()}
+    try:
+        tree = sqlglot.parse_one(sql, dialect="sqlite")
+    except ParseError as exc:
+        raise ValueError(f"SQL ayrıştırılamadı: {exc}") from exc
+
+    denied: set[str] = set()
+
+    # 1) SELECT * ve t.*: gizli sütunu olan bir tabloda yıldız kullanılamaz.
+    #    (Yıldız genişletilmeden önce kontrol edilir ki hata mesajı anlaşılır olsun.)
+    for scope in traverse_scope(tree):
+        select = scope.expression
+        if not isinstance(select, exp.Select):
+            continue
+        for proj in select.expressions:
+            if isinstance(proj, exp.Star):
+                sources = list(scope.selected_sources.values())
+                sources = [src for _, src in sources]
+            elif isinstance(proj, exp.Column) and isinstance(proj.this, exp.Star):
+                sources = [_find_source(scope, proj.table)]
+            else:
+                continue
+            for src in sources:
+                if isinstance(src, exp.Table) and src.name.lower() in real:
+                    table = src.name.lower()
+                    if ok.get(table) != real[table]:
+                        denied.add(f"{src.name}.* (gizli sütun içeren tabloda * kullanılamaz)")
+
+    # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
+    #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
+    typed = {t: {c: "TEXT" for c in cols} for t, cols in schema.items()}  # sqlglot {tablo: {sütun: tür}} ister
+    qualified = qualify(tree.copy(), schema=typed, dialect="sqlite",
+                        expand_stars=True, validate_qualify_columns=False,
+                        quote_identifiers=False)
+
+    for scope in traverse_scope(qualified):
+        # Okunan her gerçek tablo izinli olmalı. Aynı adı taşıyan bir CTE gerçek tablo
+        # değildir: kaynağı exp.Table değil, bir alt kapsamdır ve kendi içinde denetlenir.
+        for _, src in scope.selected_sources.values():
+            if isinstance(src, exp.Table):
+                name = src.name.lower()
+                if name not in ok:  # pragma_table_info('x') gibi tablo fonksiyonlarının adı boş gelir
+                    denied.add(src.name or src.sql(dialect="sqlite"))
+
+        outputs = {p.alias_or_name.lower() for p in getattr(scope.expression, "expressions", [])}
+        for col in scope.columns:
+            name = col.name.lower()
+            if col.table:
+                src = _find_source(scope, col.table)
+                if isinstance(src, exp.Table) and src.name.lower() in real:
+                    table = src.name.lower()
+                    if name not in ok.get(table, set()):
+                        denied.add(f"{src.name}.{col.name}")
+            elif name not in outputs:
+                # Çözülemeyen sütun: kapsamdaki gerçek tablolardan birinde gizliyse reddet
+                for _, src in scope.selected_sources.values():
+                    if isinstance(src, exp.Table) and src.name.lower() in real:
+                        table = src.name.lower()
+                        if name in real[table] and name not in ok.get(table, set()):
+                            denied.add(f"{src.name}.{col.name}")
+
+    if denied:
+        raise UnsafeSQL("Sorgu izin verilmeyen tablo/sütunlara erişmeye çalıştı: "
+                        + ", ".join(sorted(denied)))
+
+
 def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str]):
     """SQLite, sorguyu derlerken her tablo/sütun okumasını bu fonksiyona sorar.
 
@@ -211,16 +309,17 @@ def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: lis
 
 def run_sql(db_path: Path, sql: str, allowed: Allowed | None = None,
             timeout: float = QUERY_TIMEOUT_S) -> pd.DataFrame:
-    """Savunma katmanları: validate_sql (regex) -> yetkilendirici (izin listesi)
-    -> salt-okunur bağlantı -> süre sınırı."""
+    """Savunma katmanları: validate_sql (regex) -> check_access (ayrıştırıcı, izin listesi)
+    -> yetkilendirici (veritabanı, izin listesi) -> salt-okunur bağlantı -> süre sınırı."""
     safe = validate_sql(sql)
     denied: list[str] = []
-    deadline = time.monotonic() + timeout
     with closing(_connect_ro(db_path)) as con:
         if allowed is not None:
+            check_access(safe, allowed, _columns(con))
             real_tables = {r[0].lower() for r in con.execute(
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
             con.set_authorizer(_authorizer(_normalize(allowed), real_tables, denied))
+        deadline = time.monotonic() + timeout
         # SQLite her ~10 bin sanal makine adımında bu fonksiyonu çağırır;
         # sıfırdan farklı dönerse sorgu yarıda kesilir ("interrupted").
         con.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)

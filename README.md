@@ -46,7 +46,11 @@ python evaluate.py --only 21      # yalnızca seçilen soruları sorar
 2. Yalnızca seçilen sütunların şeması (`CREATE TABLE` ifadeleri) modele bağlam olarak verilir. Veri satırları modele hiç gönderilmez; "Modele gönderilen şema" bölümü tam olarak neyin gittiğini gösterir.
    - İstisna: kullanıcı durum, kategori gibi sütunları "Değerleri modele gösterilecek sütunlar" listesinden işaretlerse, bu sütunların farklı değerleri şemaya yorum olarak eklenir (ör. `-- değerler: 'iade', 'iptal', 'tamamlandi'`), böylece model `WHERE` koşulunda doğru değeri yazar. 20'den fazla farklı değeri olan sütunların (ad, e-posta gibi) değerleri gönderilmez; her değer 40 karakterle kesilir.
 3. Model soruyu JSON olarak döndürür: SQL, açıklama ve grafik önerisi.
-4. SQL üç katmanda denetlenir: `validate_sql` yalnızca tek bir `SELECT`'e izin verir; SQLite yetkilendiricisi (`set_authorizer`) izin listesi dışındaki her tablo/sütun okumasını sorgu çalışmadan reddeder (takma ad, CTE, `SELECT *` veya `sqlite_master` ile atlatılamaz); bağlantı da salt-okunur açılır. Her sorgu en fazla 5 saniye çalışabilir (`NL2SQL_QUERY_TIMEOUT` ile değiştirilebilir); süreyi aşan sorgu durdurulur.
+4. SQL dört katmanda denetlenir:
+   - `validate_sql` yalnızca tek bir `SELECT`'e izin verir.
+   - `check_access` SQL'i [sqlglot](https://github.com/tobymao/sqlglot) ile ayrıştırır, takma adları ve alt sorguları gerçek tablolara bağlar, izin listesi dışındaki her tablo/sütunu adıyla bildirerek reddeder. Gizli sütunu olan bir tabloda `SELECT *` ve `tablo.*` yasaktır.
+   - Ayrıştırıcının kaçırabileceği her şeye karşı SQLite yetkilendiricisi (`set_authorizer`) aynı kuralı veritabanı içinde, sorgu çalışmadan uygular.
+   - Bağlantı salt-okunur açılır. Her sorgu en fazla 5 saniye çalışabilir (`NL2SQL_QUERY_TIMEOUT` ile değiştirilebilir); süreyi aşan sorgu durdurulur.
 5. Sorgu hata verirse hata mesajı modele geri gönderilir ve bir kez daha denenir. İzinsiz erişim denemesi ve süre aşımı yeniden denenmez, kullanıcıya gösterilir.
 
 ## Sonraki adımlar
