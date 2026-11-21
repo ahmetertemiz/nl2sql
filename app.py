@@ -142,6 +142,12 @@ if last:
     if result["explanation"]:
         st.info(result["explanation"])
 
+    # Modelin soruda açık olmayan noktalarda verdiği kararlar. Soru netse liste boştur.
+    if result.get("assumptions"):
+        with st.container(border=True):
+            st.markdown("**Varsayımlar**")
+            st.markdown("\n".join(f"- {a}" for a in result["assumptions"]))
+
     if result["sql"]:
         with st.expander("Üretilen SQL", expanded=True):
             st.code(format_sql(result["sql"]), language="sql")  # yalnızca gösterim biçimlenir

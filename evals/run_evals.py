@@ -141,6 +141,7 @@ def evaluate_one(item: dict, db_path: Path, answer_fn=answer) -> dict:
         return out
     out["uretilen_sql"] = result["sql"]
     out["aciklama"] = result.get("explanation", "")
+    out["varsayimlar"] = result.get("assumptions", [])
 
     if item["referans_sql"] is None:  # şemayla cevaplanamayan soru: model SQL yazmamalı
         out["gecti"] = not result["sql"]

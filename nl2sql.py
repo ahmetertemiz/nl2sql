@@ -36,8 +36,18 @@ Kurallar:
 - Sütunlara okunaklı Türkçe takma adlar ver (ör. toplam_ciro).
 - Soru şemayla cevaplanamıyorsa sql alanını boş bırak ve nedenini explanation'da yaz.
 
+Varsayımlar (assumptions):
+- Soruda açıkça söylenmeyen ama SONUCU DEĞİŞTİREN her kararı kısa bir madde olarak yaz.
+  Örnekler: hangi sipariş durumlarının sayıldığı, göreli bir tarih aralığının sınırları,
+  "en iyi" gibi belirsiz bir ölçütün nasıl tanımlandığı.
+- Soru bu ayrıntıları zaten belirtiyorsa ya da tek makul yorum varsa boş liste [] döndür.
+  Her soruya varsayım uydurma: gereksiz varsayım kullanıcının dikkatini asıl belirsizlikten dağıtır.
+- Sütun adı, takma ad, sıralama yönü, yuvarlama gibi sonucu değiştirmeyen teknik ayrıntıları yazma.
+- En fazla 3 madde. sql boşsa assumptions da boş olsun.
+
 Yalnızca şu JSON'u döndür, başka hiçbir şey yazma:
 {{"sql": "...", "explanation": "sorgunun ne yaptığını 1-2 cümleyle anlat",
+  "assumptions": ["soruda açık olmayan, senin karar verdiğin her şey; yoksa boş liste"],
   "chart": "bar" | "line" | "none", "x": "x ekseni sütunu veya null", "y": "y ekseni sütunu veya null"}}"""
 
 INTERPRET_MAX_ROWS = 50  # yorum için modele gönderilen en fazla satır
@@ -400,9 +410,12 @@ def parse_llm_json(text: str) -> dict:
     if not match:
         raise ValueError(f"Model JSON döndürmedi: {text[:200]}")
     data = json.loads(match.group(0))
+    raw = data.get("assumptions")
+    assumptions = [str(a).strip() for a in raw if str(a).strip()] if isinstance(raw, list) else []
     return {
         "sql": (data.get("sql") or "").strip(),
         "explanation": data.get("explanation") or "",
+        "assumptions": assumptions,  # eski biçimde (alan yoksa) ya da bozuksa boş liste
         "chart": data.get("chart") if data.get("chart") in ("bar", "line") else "none",
         "x": data.get("x"),
         "y": data.get("y"),

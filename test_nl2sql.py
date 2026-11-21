@@ -310,6 +310,25 @@ def test_response_text_skips_thinking_blocks():
     assert response_text(content) == '{"sql": "SELECT 1"}'
 
 
+def test_parse_assumptions():
+    out = parse_llm_json('{"sql": "SELECT 1", "assumptions": ["Yalnızca tamamlanan siparişler", "  ", 5]}')
+    assert out["assumptions"] == ["Yalnızca tamamlanan siparişler", "5"]
+
+
+@pytest.mark.parametrize("raw", ['{"sql": "SELECT 1"}',                      # eski biçim
+                                 '{"sql": "SELECT 1", "assumptions": null}',
+                                 '{"sql": "SELECT 1", "assumptions": "tek metin"}'])
+def test_missing_or_bad_assumptions_become_empty_list(raw):
+    assert parse_llm_json(raw)["assumptions"] == []
+
+
+def test_prompt_asks_for_empty_assumptions_on_clear_questions():
+    from nl2sql import SYSTEM_PROMPT
+    assert '"assumptions"' in SYSTEM_PROMPT and "boş liste []" in SYSTEM_PROMPT
+    assert "uydurma" in SYSTEM_PROMPT
+    SYSTEM_PROMPT.format(schema="x", today="y")   # süslü parantezler bozulmamış olmalı
+
+
 def test_parse_json_in_code_fence():
     out = parse_llm_json('```json\n{"sql": "SELECT 1", "explanation": "x", "chart": "pie"}\n```')
     assert out["sql"] == "SELECT 1" and out["chart"] == "none"

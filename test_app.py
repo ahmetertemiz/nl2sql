@@ -163,6 +163,29 @@ def test_new_question_clears_old_comment(calls, comments):
     assert not next(b for b in at.button if b.label == "Yorumla").disabled
 
 
+def _answer_with(assumptions):
+    return lambda *a, **k: {"sql": "SELECT 1", "explanation": "x", "assumptions": assumptions,
+                            "chart": "none", "x": None, "y": None,
+                            "df": pd.DataFrame({"n": [1]}), "error": None}
+
+
+def test_assumptions_shown_above_result(monkeypatch):
+    monkeypatch.setattr(nl2sql, "answer", _answer_with(["Yalnızca tamamlanan siparişler sayıldı",
+                                                        "Kasım dahil alındı"]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    at = asked(open_app())
+    texts = [m.value for m in at.main.markdown]
+    assert "**Varsayımlar**" in texts
+    assert "- Yalnızca tamamlanan siparişler sayıldı\n- Kasım dahil alındı" in texts
+
+
+def test_no_assumptions_no_heading(monkeypatch):
+    monkeypatch.setattr(nl2sql, "answer", _answer_with([]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    at = asked(open_app())
+    assert "**Varsayımlar**" not in [m.value for m in at.main.markdown]
+
+
 def test_example_button_calls_model(calls):
     at = open_app()
     example = next(b for b in at.button if b.label.startswith("Aylara"))
