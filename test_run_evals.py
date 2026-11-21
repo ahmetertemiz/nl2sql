@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 
 import seed_db
-from evals.run_evals import (LEVELS, evaluate_one, load_questions, results_match, side_by_side,
-                             summarize)
+from evals.run_evals import (LEVELS, evaluate_one, evaluate_repeated, load_questions,
+                             results_match, side_by_side, summarize)
 from nl2sql import run_sql
 
 
@@ -148,12 +148,63 @@ def test_model_exception_counts_as_failure(db):
     assert not result["gecti"] and "ağ hatası" in result["neden"]
 
 
-def test_summary_by_difficulty():
-    rows = [{"gecti": True, "zorluk": "kolay"}, {"gecti": False, "zorluk": "kolay"},
-            {"gecti": True, "zorluk": "zor"}]
-    s = summarize(rows)
-    assert s["toplam"] == {"gecen": 2, "toplam": 3, "yuzde": 66.7}
-    assert s["zorluk"]["kolay"]["yuzde"] == 50.0 and s["zorluk"]["orta"]["toplam"] == 0
+def test_summary_by_difficulty_and_unstable():
+    records = [{"id": 1, "zorluk": "kolay", "gecen": 3, "kosu": 3, "kararsiz": False},
+               {"id": 2, "zorluk": "kolay", "gecen": 1, "kosu": 3, "kararsiz": True},
+               {"id": 3, "zorluk": "zor", "gecen": 0, "kosu": 3, "kararsiz": False}]
+    s = summarize(records)
+    assert s["toplam"] == {"gecen": 4, "toplam": 9, "yuzde": 44.4}
+    assert s["zorluk"]["kolay"] == {"gecen": 4, "toplam": 6, "yuzde": 66.7}
+    assert s["zorluk"]["orta"]["toplam"] == 0
+    assert s["kararsiz"] == [2] and s["hep_kalan"] == [3]
+
+
+# --- Göreli tolerans --------------------------------------------------------------
+def test_rounded_correct_answer_passes():
+    # 14.917163 doğru cevap; model ROUND(..., 1) ile 14.9 döndürürse yine doğru sayılmalı
+    gold = pd.DataFrame({"buyume": [14.917163]})
+    assert results_match(gold, pd.DataFrame({"x": [14.9]}))
+    assert results_match(gold, pd.DataFrame({"x": [14.92]}))
+    assert not results_match(gold, pd.DataFrame({"x": [15.1]}))   # %1.2 fark: yanlış
+
+
+def test_rounded_rows_with_text_still_match_unordered():
+    gold = pd.DataFrame({"ay": ["2026-09", "2026-10"], "ciro": [1174815.2, 1350064.3]})
+    pred = pd.DataFrame({"ay": ["2026-10", "2026-09"], "ciro": [1350064.0, 1174815.0]})  # ROUND(..., 0)
+    assert results_match(gold, pred)
+
+
+def test_integer_counts_must_be_exact():
+    # Sayımlarda tolerans yok: 1093 yerine 1090 yanlış (fark %0.3 olsa da)
+    gold = pd.DataFrame({"n": [1093, 407]})
+    assert not results_match(gold, pd.DataFrame({"n": [1090, 407]}))
+    assert results_match(gold, pd.DataFrame({"n": [407.0, 1093.0]}))
+
+
+def test_rounded_q105_passes_end_to_end(db):
+    item = next(q for q in HOLDOUT if q["id"] == 105)
+    rounded = ("WITH m AS (SELECT strftime('%Y-%m', o.order_date) AS ay, "
+               "SUM(oi.quantity * oi.unit_price) AS ciro FROM orders o JOIN order_items oi "
+               "ON oi.order_id = o.id WHERE o.status = 'tamamlandi' GROUP BY ay) "
+               "SELECT ROUND(100.0 * (e.ciro - s.ciro) / s.ciro, 1) AS buyume "
+               "FROM m e, m s WHERE e.ay = '2026-10' AND s.ay = '2026-09'")
+    assert run_sql(db, rounded).iloc[0, 0] == 14.9
+    assert evaluate_one(item, db, fake_model(rounded))["gecti"]
+
+
+# --- Tekrarlı koşu ----------------------------------------------------------------
+def test_repeated_runs_detect_unstable_question(db):
+    item = {"id": 1, "soru": "?", "referans_sql": "SELECT COUNT(*) FROM customers",
+            "zorluk": "kolay", "kategori": "x", "sirali": False}
+    answers = iter(["SELECT COUNT(*) FROM customers", "SELECT COUNT(*) FROM orders",
+                    "SELECT COUNT(*) FROM customers"])
+
+    def flaky(question, db_path, today):  # her çağrıda sıradaki SQL'i "üretir"
+        return fake_model(next(answers))(question, db_path, today)
+
+    r = evaluate_repeated(item, db, runs=3, answer_fn=flaky)
+    assert r["gecen"] == 2 and r["kosu"] == 3 and r["kararsiz"]
+    assert [a["gecti"] for a in r["denemeler"]] == [True, False, True]
 
 
 def test_side_by_side_shows_both_queries():

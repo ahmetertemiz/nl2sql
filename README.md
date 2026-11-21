@@ -27,6 +27,7 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 | `test_nl2sql.py` | API anahtarı gerektirmeyen testler (`python -m pytest -q`) |
 | `test_app.py` | Arayüz testleri: model yalnızca Gönder'e basılınca çağrılıyor mu, grafik ve SQL gösterimi (sahte model, API anahtarı gerektirmez) |
 | `evals/questions.yaml` | 20 soruluk değerlendirme seti: soru, referans SQL, zorluk (kolay/orta/zor), kategori |
+| `evals/holdout.yaml` | 20 soruluk ayrı test seti: gerçekçi, dağınık sorular; yalnızca ölçmek için (prompt bu sete göre değiştirilmez) |
 | `evals/run_evals.py` | Soruları modele sorar, sonucu referansla karşılaştırır, doğruluğu toplam ve zorluğa göre yazar |
 | `test_run_evals.py` | Karşılaştırma mantığının ve soru setinin testleri (API anahtarı gerektirmez) |
 
@@ -36,13 +37,21 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 python evals/run_evals.py --check-gold   # API'siz: referans SQL'lerin sonuçlarını gösterir
 python evals/run_evals.py                # 20 soruyu modele sorar (20-40 API çağrısı)
 python evals/run_evals.py --only 13 15   # yalnızca seçilen soruları sorar
+python evals/run_evals.py --set holdout --runs 3   # ayrı test seti, her soru 3 kez
 ```
+
+İki set var:
+
+- `questions` (varsayılan): geliştirme seti. Prompt'u iyileştirirken buna bakılır.
+- `holdout`: ayrı test seti. Belirsiz ifadeler, yazım hataları, iki adımlı sorular, pencere fonksiyonları ve aynı adlı müşteri tuzağı içerir. Prompt bu sete bakılarak **değiştirilmez**; yoksa set, modelin görmediği sorulardaki başarıyı ölçmez olur.
+
+`--runs N` her soruyu N kez sorar. Model aynı soruya her seferinde aynı SQL'i yazmayabilir. Rapor soru başına geçme oranını ve "kararsız" soruları (bazen geçen, bazen kalan) ayrıca listeler.
 
 Ölçüt çalıştırma doğruluğudur: modelin SQL'i referansla aynı metin olmak zorunda değil, aynı sonucu döndürmesi yeterli.
 
 - Sütun adları, sütun sırası ve fazladan sütunlar yok sayılır.
 - Satır sırası yalnızca `sirali: true` olan sorularda (soru sıralama istiyorsa) önemlidir.
-- Sayılar 2 basamağa yuvarlanarak karşılaştırılır.
+- Ondalıklı sayılarda %0.5 göreli tolerans vardır: `ROUND(..., 1)` ile yuvarlanmış doğru bir cevap yanlış sayılmaz. İki değer de tam sayıysa (sayım gibi) birebir eşit olmalıdır.
 - "Bugün" 2026-11-20'ye sabitlenmiştir (`seed_db.py` ile aynı); "geçen ay", "son 3 ay" gibi sorular her gün aynı cevabı verir.
 
 Çıktıda toplam doğruluk, zorluk seviyesine göre doğruluk ve başarısız her soru için üretilen SQL ile referans SQL yan yana gösterilir. Sonuçlar `evals/results/` altına tarihli bir JSON dosyası olarak kaydedilir.

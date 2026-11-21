@@ -4,6 +4,7 @@
     python evals/run_evals.py               # modeli çağırır (ANTHROPIC_API_KEY gerekir)
     python evals/run_evals.py --check-gold  # API'siz: yalnızca referans SQL'leri çalıştırıp gösterir
     python evals/run_evals.py --only 13 15  # yalnızca seçilen soruları modele sor
+    python evals/run_evals.py --set holdout --runs 3   # ayrı seti, her soruyu 3 kez sor
 
 Ölçüt "çalıştırma doğruluğu"dur (execution accuracy): modelin SQL metni referans
 SQL ile aynı olmak zorunda değil; önemli olan ikisinin de aynı SONUCU döndürmesi.
@@ -28,6 +29,7 @@ from nl2sql import MODEL, answer, format_sql, run_sql  # noqa: E402
 
 DB_PATH = ROOT / "shop.db"
 QUESTIONS = ROOT / "evals" / "questions.yaml"
+SETS = {"questions": QUESTIONS, "holdout": ROOT / "evals" / "holdout.yaml"}
 RESULTS_DIR = ROOT / "evals" / "results"
 LEVELS = ("kolay", "orta", "zor")
 # seed_db.build içindeki sabit "bugün". Sabit tutuyoruz ki "geçen ay", "son 3 ay"
@@ -39,15 +41,59 @@ def load_questions(path: Path = QUESTIONS) -> list[dict]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+# Sayılar için göreli tolerans: 14.917 ile ROUND(..., 1) = 14.9 arasındaki fark %0.11, eşit sayılır.
+REL_TOL = 0.005
+
+
 def _norm(value):
-    """Hücreyi karşılaştırılabilir hale getir: 5 ile 5.0, 1234.5 ile 1234.50001 eşit sayılsın."""
+    """Hücreyi karşılaştırılabilir hale getir: sayılar float, metinler kırpılmış str."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     if isinstance(value, bool):
         return float(value)
     if isinstance(value, (int, float)) or hasattr(value, "item"):  # numpy sayıları dahil
-        return round(float(value), 2)
+        return float(value)
     return str(value).strip()
+
+
+def cells_equal(a, b) -> bool:
+    """İki hücre aynı mı?
+
+    - İkisi de tam sayıysa (sayım gibi) birebir eşit olmalı: 1093 ile 1090 farklıdır,
+      oysa %0.5 tolerans bunu kabul ederdi.
+    - Biri ondalıklıysa göreli tolerans: |a - b| <= REL_TOL * max(|a|, |b|).
+      Böylece yuvarlanmış (ROUND) ama doğru bir cevap yanlış sayılmaz.
+    """
+    if isinstance(a, float) and isinstance(b, float):
+        if a.is_integer() and b.is_integer():
+            return a == b
+        return abs(a - b) <= REL_TOL * max(abs(a), abs(b))
+    return a == b
+
+
+def _sort_key(v):
+    return (0, v, "") if isinstance(v, float) else (1, 0.0, repr(v))
+
+
+def _cols_equal(gc: list, pc: list, ordered: bool) -> bool:
+    if not ordered:  # sıra önemsizse ikisini de sıralayıp eleman eleman karşılaştır
+        gc, pc = sorted(gc, key=_sort_key), sorted(pc, key=_sort_key)
+    return all(cells_equal(a, b) for a, b in zip(gc, pc))
+
+
+def _rows_equal(gold_rows: list, pred_rows: list, ordered: bool) -> bool:
+    def same(r1, r2):
+        return all(cells_equal(a, b) for a, b in zip(r1, r2))
+
+    if ordered:
+        return all(same(g, p) for g, p in zip(gold_rows, pred_rows))
+    unused = list(pred_rows)  # her beklenen satıra, henüz kullanılmamış eşleşen bir satır bul
+    for g in gold_rows:
+        match = next((i for i, p in enumerate(unused) if same(g, p)), None)
+        if match is None:
+            return False
+        unused.pop(match)
+    return True
 
 
 def results_match(gold: pd.DataFrame, pred: pd.DataFrame, ordered: bool = False) -> bool:
@@ -58,7 +104,7 @@ def results_match(gold: pd.DataFrame, pred: pd.DataFrame, ordered: bool = False)
     - Modelin fazladan sütun döndürmesi serbest (ör. adın yanında id); ama
       beklenen her sütun tahminde bulunmalı.
     - Satır sırası yalnızca ordered=True ise önemli.
-    - Sayılar 2 basamağa yuvarlanarak karşılaştırılır.
+    - Ondalıklı sayılarda %0.5 göreli tolerans (bkz. cells_equal).
     """
     if len(gold) != len(pred) or len(gold.columns) > len(pred.columns):
         return False
@@ -66,13 +112,9 @@ def results_match(gold: pd.DataFrame, pred: pd.DataFrame, ordered: bool = False)
     gold_cols = [[_norm(v) for v in gold[c]] for c in gold.columns]
     pred_cols = [[_norm(v) for v in pred.iloc[:, i]] for i in range(len(pred.columns))]
 
-    def key(col):  # sıra önemsizse sütunu sıralayıp karşılaştır
-        return col if ordered else sorted(col, key=repr)
-
-    # Her beklenen sütun için, değerleri birebir tutan aday tahmin sütunları
-    candidates = [
-        [i for i, pc in enumerate(pred_cols) if key(pc) == key(gc)] for gc in gold_cols
-    ]
+    # Her beklenen sütun için, değerleri tutan aday tahmin sütunları
+    candidates = [[i for i, pc in enumerate(pred_cols) if _cols_equal(gc, pc, ordered)]
+                  for gc in gold_cols]
     if any(not c for c in candidates):
         return False
 
@@ -82,11 +124,7 @@ def results_match(gold: pd.DataFrame, pred: pd.DataFrame, ordered: bool = False)
     for choice in product(*candidates):
         if len(set(choice)) < len(choice):
             continue  # aynı tahmin sütunu iki beklenen sütuna eşlenemez
-        pred_rows = list(zip(*(pred_cols[i] for i in choice)))
-        if ordered:
-            if pred_rows == gold_rows:
-                return True
-        elif sorted(pred_rows, key=repr) == sorted(gold_rows, key=repr):
+        if _rows_equal(gold_rows, list(zip(*(pred_cols[i] for i in choice))), ordered):
             return True
     return False
 
@@ -121,14 +159,28 @@ def evaluate_one(item: dict, db_path: Path, answer_fn=answer) -> dict:
     return out
 
 
-def summarize(results: list[dict]) -> dict:
-    """Toplam ve zorluk seviyesine göre doğruluk."""
-    def rate(rows):
-        return {"gecen": sum(r["gecti"] for r in rows), "toplam": len(rows),
-                "yuzde": round(100 * sum(r["gecti"] for r in rows) / len(rows), 1) if rows else None}
+def evaluate_repeated(item: dict, db_path: Path, runs: int, answer_fn=answer) -> dict:
+    """Aynı soruyu runs kez sor. Model her seferinde aynı SQL'i yazmayabilir;
+    tek koşu şanslı ya da şanssız olabilir."""
+    attempts = [evaluate_one(item, db_path, answer_fn) for _ in range(runs)]
+    passed = sum(a["gecti"] for a in attempts)
+    return {"id": item["id"], "soru": item["soru"], "zorluk": item["zorluk"],
+            "kategori": item["kategori"], "referans_sql": item["referans_sql"],
+            "yorum": item.get("yorum", ""), "gecen": passed, "kosu": runs,
+            "kararsiz": 0 < passed < runs, "denemeler": attempts}
 
-    return {"toplam": rate(results),
-            "zorluk": {lvl: rate([r for r in results if r["zorluk"] == lvl]) for lvl in LEVELS}}
+
+def summarize(records: list[dict]) -> dict:
+    """Toplam ve zorluk seviyesine göre doğruluk (tüm koşular üzerinden) + kararsız sorular."""
+    def rate(rows):
+        passed, total = sum(r["gecen"] for r in rows), sum(r["kosu"] for r in rows)
+        return {"gecen": passed, "toplam": total,
+                "yuzde": round(100 * passed / total, 1) if total else None}
+
+    return {"toplam": rate(records),
+            "zorluk": {lvl: rate([r for r in records if r["zorluk"] == lvl]) for lvl in LEVELS},
+            "kararsiz": [r["id"] for r in records if r["kararsiz"]],
+            "hep_kalan": [r["id"] for r in records if r["gecen"] == 0]}
 
 
 def side_by_side(left: str, right: str, width: int = 58) -> str:
@@ -162,11 +214,15 @@ def main() -> int:
                         help="Modeli çağırmadan referans SQL'lerin sonuçlarını göster")
     parser.add_argument("--only", type=int, nargs="+", metavar="ID",
                         help="Yalnızca bu id'li soruları çalıştır; API maliyetini azaltır")
+    parser.add_argument("--set", choices=sorted(SETS), default="questions",
+                        help="questions: geliştirme seti; holdout: yalnızca ölçmek için ayrı set")
+    parser.add_argument("--runs", type=int, default=1, metavar="N",
+                        help="Her soruyu N kez sor; kararsız soruları bulmak için")
     args = parser.parse_args()
 
     if not DB_PATH.exists():  # tohum sabit (seed=42): veri her kurulumda aynı
         seed_db.build(DB_PATH)
-    items = load_questions()
+    items = load_questions(SETS[args.set])
     if args.only:
         items = [item for item in items if item["id"] in args.only]
 
@@ -178,31 +234,37 @@ def main() -> int:
         print("ANTHROPIC_API_KEY tanımlı değil. Önce anahtarı ayarla (README'ye bak).")
         return 1
 
-    print(f"Model: {MODEL} | Soru sayısı: {len(items)} | Bugün: {TODAY}\n")
-    results = []
+    print(f"Model: {MODEL} | Set: {args.set} | Soru: {len(items)} | Koşu: {args.runs} | Bugün: {TODAY}\n")
+    records = []
     for item in items:
-        r = evaluate_one(item, DB_PATH)
-        results.append(r)
-        print(f"{'✓' if r['gecti'] else '✗'} [{r['id']:>2}] ({r['zorluk']}) {r['soru']}")
+        r = evaluate_repeated(item, DB_PATH, args.runs)
+        records.append(r)
+        mark = "✓" if r["gecen"] == r["kosu"] else ("~" if r["kararsiz"] else "✗")
+        print(f"{mark} [{r['id']:>3}] {r['gecen']}/{r['kosu']} ({r['zorluk']}) {r['soru']}")
 
-    summary = summarize(results)
+    summary = summarize(records)
     t = summary["toplam"]
-    print(f"\nDoğruluk: {t['gecen']}/{t['toplam']} = %{t['yuzde']}")
+    print(f"\nDoğruluk: {t['gecen']}/{t['toplam']} = %{t['yuzde']}  (✓ hep geçti, ~ kararsız, ✗ hep kaldı)")
     for lvl, s in summary["zorluk"].items():
         if s["toplam"]:
             print(f"  {lvl:<6} {s['gecen']}/{s['toplam']} = %{s['yuzde']}")
+    print(f"Kararsız sorular: {summary['kararsiz'] or 'yok'}")
 
-    failed = [r for r in results if not r["gecti"]]
+    failed = [r for r in records if r["gecen"] < r["kosu"]]
     if failed:
-        print(f"\nBaşarısız sorular ({len(failed)}):")
+        print(f"\nEn az bir kez başarısız olan sorular ({len(failed)}):")
         for r in failed:
-            print(f"\n[{r['id']}] ({r['zorluk']}, {r['kategori']}) {r['soru']}")
-            print(f"    Neden: {r['neden']}")
-            print(side_by_side(r["uretilen_sql"], r["referans_sql"]))
+            print(f"\n[{r['id']}] {r['gecen']}/{r['kosu']} ({r['zorluk']}, {r['kategori']}) {r['soru']}")
+            if r["yorum"]:
+                print(f"    Referansın yorumu: {r['yorum']}")
+            first_fail = next(a for a in r["denemeler"] if not a["gecti"])
+            print(f"    Neden: {first_fail['neden']}")
+            print(side_by_side(first_fail["uretilen_sql"], r["referans_sql"]))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}.json"
-    out.write_text(json.dumps({"model": MODEL, "bugun": TODAY, "ozet": summary, "sonuclar": results},
+    out = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}_{args.set}_x{args.runs}.json"
+    out.write_text(json.dumps({"model": MODEL, "set": args.set, "kosu": args.runs, "bugun": TODAY,
+                               "ozet": summary, "sorular": records},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nAyrıntılar: {out.relative_to(ROOT)}")
     return 0
