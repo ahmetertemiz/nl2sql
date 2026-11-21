@@ -74,10 +74,14 @@
   sirali: true
 
 - id: 9
-  soru: Hiç sipariş vermemiş kaç müşteri var?
+  # Cevap 81. Yaygın hatalar farklı sayı verir: tarih filtresi LEFT JOIN sonrası WHERE'e
+  # konursa 0, mantık ters kurulursa 119, yalnızca tamamlanan siparişler sayılırsa 86.
+  # (Eski "hiç sipariş vermemiş" sorusunun cevabı 0'dı; yanlış sorgular da 0 verebiliyordu.)
+  soru: Geçen ay hiç sipariş vermemiş kaç müşteri var? Siparişin durumu önemli değil.
   referans_sql: >-
-    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)
-  zorluk: orta
+    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
+    (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND strftime('%Y-%m', o.order_date) = '2026-10')
+  zorluk: zor
   kategori: join
   sirali: false
 

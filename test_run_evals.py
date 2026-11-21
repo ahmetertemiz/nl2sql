@@ -87,6 +87,23 @@ def test_inner_join_that_drops_unsold_products_fails(db):
     assert not evaluate_one(item, db, fake_model(inner))["gecti"]
 
 
+@pytest.mark.parametrize("wrong_sql", [
+    # LEFT JOIN + tarih filtresi WHERE'de: eşleşmeyen satırların tarihi NULL, hepsi elenir -> 0
+    "SELECT COUNT(*) FROM customers c LEFT JOIN orders o ON o.customer_id = c.id "
+    "WHERE o.id IS NULL AND strftime('%Y-%m', o.order_date) = '2026-10'",
+    # Ters mantık: o ay sipariş VERENLER -> 119
+    "SELECT COUNT(DISTINCT customer_id) FROM orders WHERE strftime('%Y-%m', order_date) = '2026-10'",
+    # Yalnızca tamamlanan siparişler sayılmış (soru "durum önemli değil" diyor) -> 86
+    "SELECT COUNT(*) FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o "
+    "WHERE o.customer_id = c.id AND strftime('%Y-%m', o.order_date) = '2026-10' "
+    "AND o.status = 'tamamlandi')",
+], ids=["filtre-WHERE'de", "ters-mantik", "yalnizca-tamamlanan"])
+def test_common_mistakes_fail_q9(db, wrong_sql):
+    item = next(q for q in QUESTIONS if q["id"] == 9)
+    assert run_sql(db, item["referans_sql"]).iloc[0, 0] == 81
+    assert not evaluate_one(item, db, fake_model(wrong_sql))["gecti"]
+
+
 def test_wrong_sql_and_sql_for_unanswerable_fail(db):
     count_q = {"id": 1, "soru": "?", "referans_sql": "SELECT COUNT(*) FROM customers",
                "zorluk": "kolay", "kategori": "x", "sirali": False}
