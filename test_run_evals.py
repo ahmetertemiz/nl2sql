@@ -85,6 +85,30 @@ def test_holdout_shape():
     assert {"pencere", "ayni-ad", "iki-adim", "belirsiz", "yazim-hatasi"} <= {q["kategori"] for q in HOLDOUT}
 
 
+HOLDOUT_V1_FINGERPRINT = "d6e6f7f17ff463e5ab7fa5927d14fab25e6f10a8563e37772201c8d7e308433d"
+
+
+HOLDOUT_V2 = load_questions(Path(__file__).parent / "evals" / "holdout_v2.yaml")
+
+
+def test_holdout_v2_ids_and_gold(db):
+    # Şablon boş başlar; sorular eklendikçe aynı kurallar geçerli
+    assert isinstance(HOLDOUT_V2, list)
+    ids = [q["id"] for q in HOLDOUT_V2]
+    assert len(ids) == len(set(ids)) and all(i >= 201 for i in ids)
+    for item in HOLDOUT_V2:
+        assert evaluate_one(item, db, fake_model(item["referans_sql"] or ""))["gecti"], item["id"]
+
+
+def test_holdout_v1_is_frozen():
+    # Donduruldu (2026-11-21): soru, referans veya alan değişirse bu parmak izi tutmaz.
+    # Yorum satırları (#) parmak izine girmez; not eklemek serbest.
+    import hashlib
+    import json
+    digest = hashlib.sha256(json.dumps(HOLDOUT, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    assert digest == HOLDOUT_V1_FINGERPRINT, "holdout.yaml v1 donduruldu; yeni sorular holdout_v2.yaml'a"
+
+
 @pytest.mark.parametrize("item", HOLDOUT, ids=[str(q["id"]) for q in HOLDOUT])
 def test_holdout_gold_sql_passes_itself(db, item):
     assert evaluate_one(item, db, fake_model(item["referans_sql"] or ""))["gecti"]
@@ -190,6 +214,55 @@ def test_rounded_q105_passes_end_to_end(db):
                "FROM m e, m s WHERE e.ay = '2026-10' AND s.ay = '2026-09'")
     assert run_sql(db, rounded).iloc[0, 0] == 14.9
     assert evaluate_one(item, db, fake_model(rounded))["gecti"]
+
+
+# --- kabul_edilen ve ilk_satir ------------------------------------------------------
+BASKET = {"id": 1, "soru": "ortalama sepet?", "zorluk": "orta", "kategori": "belirsiz", "sirali": False,
+          "referans_sql": "SELECT AVG(a) FROM (SELECT SUM(quantity) a FROM order_items GROUP BY order_id)"}
+COMPLETED_BASKET = ("SELECT AVG(a) FROM (SELECT SUM(oi.quantity) a FROM orders o JOIN order_items oi "
+                    "ON oi.order_id = o.id WHERE o.status = 'tamamlandi' GROUP BY o.id)")
+
+
+def test_alternative_reference_accepts_other_interpretation(db):
+    assert not evaluate_one(BASKET, db, fake_model(COMPLETED_BASKET))["gecti"]   # alan yokken kalır
+    item = {**BASKET, "kabul_edilen": [COMPLETED_BASKET]}
+    r = evaluate_one(item, db, fake_model(COMPLETED_BASKET))
+    assert r["gecti"] and r["eslesme"] == "kabul_edilen[0]"
+    assert evaluate_one(item, db, fake_model(BASKET["referans_sql"]))["eslesme"] == "referans"
+
+
+def test_alternative_reference_still_rejects_wrong_answer(db):
+    item = {**BASKET, "kabul_edilen": [COMPLETED_BASKET]}
+    wrong = "SELECT AVG(quantity) FROM order_items"            # kalem başına, sepet değil
+    assert not evaluate_one(item, db, fake_model(wrong))["gecti"]
+
+
+TOP_MONTH = {"id": 2, "soru": "masa lambası en çok hangi ay?", "zorluk": "orta", "kategori": "x",
+             "sirali": False,
+             "referans_sql": "SELECT strftime('%Y-%m', o.order_date) ay, SUM(oi.quantity) n "
+                             "FROM order_items oi JOIN orders o ON o.id = oi.order_id "
+                             "WHERE oi.product_id = 10 AND o.status = 'tamamlandi' "
+                             "GROUP BY ay ORDER BY n DESC LIMIT 1"}
+ALL_MONTHS = TOP_MONTH["referans_sql"].replace(" LIMIT 1", "")
+ALL_MONTHS_WRONG_ORDER = ALL_MONTHS.replace("ORDER BY n DESC", "ORDER BY n ASC")
+
+
+def test_first_row_accepts_full_sorted_list(db):
+    assert not evaluate_one(TOP_MONTH, db, fake_model(ALL_MONTHS))["gecti"]       # alan yokken kalır
+    item = {**TOP_MONTH, "ilk_satir": True}
+    r = evaluate_one(item, db, fake_model(ALL_MONTHS))
+    assert r["gecti"] and r["eslesme"] == "referans (ilk satır)"
+
+
+def test_first_row_rejects_list_with_wrong_first_row(db):
+    item = {**TOP_MONTH, "ilk_satir": True}
+    assert not evaluate_one(item, db, fake_model(ALL_MONTHS_WRONG_ORDER))["gecti"]
+
+
+def test_first_row_only_applies_to_single_row_gold(db):
+    # Referans birden çok satır döndürüyorsa ilk_satir hiçbir şeyi gevşetmez
+    item = {**TOP_MONTH, "referans_sql": ALL_MONTHS, "ilk_satir": True}
+    assert not evaluate_one(item, db, fake_model(ALL_MONTHS + " LIMIT 1"))["gecti"]
 
 
 # --- Tekrarlı koşu ----------------------------------------------------------------

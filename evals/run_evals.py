@@ -29,7 +29,8 @@ from nl2sql import MODEL, answer, format_sql, run_sql  # noqa: E402
 
 DB_PATH = ROOT / "shop.db"
 QUESTIONS = ROOT / "evals" / "questions.yaml"
-SETS = {"questions": QUESTIONS, "holdout": ROOT / "evals" / "holdout.yaml"}
+SETS = {"questions": QUESTIONS, "holdout": ROOT / "evals" / "holdout.yaml",
+        "holdout_v2": ROOT / "evals" / "holdout_v2.yaml"}
 RESULTS_DIR = ROOT / "evals" / "results"
 LEVELS = ("kolay", "orta", "zor")
 # seed_db.build içindeki sabit "bugün". Sabit tutuyoruz ki "geçen ay", "son 3 ay"
@@ -38,7 +39,7 @@ TODAY = "2026-11-20"
 
 
 def load_questions(path: Path = QUESTIONS) -> list[dict]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or []  # boş şablon -> []
 
 
 # Sayılar için göreli tolerans: 14.917 ile ROUND(..., 1) = 14.9 arasındaki fark %0.11, eşit sayılır.
@@ -152,12 +153,34 @@ def evaluate_one(item: dict, db_path: Path, answer_fn=answer) -> dict:
         out["neden"] = "SQL üretmedi"
     elif result["error"]:
         out["neden"] = f"SQL hatası: {result['error']}"
-    elif results_match(run_sql(db_path, item["referans_sql"]), result["df"], item["sirali"]):
-        out["gecti"] = True
     else:
-        pred = result["df"]
-        out["neden"] = f"Sonuç beklenenden farklı ({len(pred)} satır döndü)"
+        match = match_any(item, result["df"], db_path)
+        out["gecti"] = match is not None
+        out["eslesme"] = match
+        if match is None:
+            out["neden"] = f"Sonuç beklenenden farklı ({len(result['df'])} satır döndü)"
     return out
+
+
+def match_any(item: dict, pred: pd.DataFrame, db_path: Path) -> str | None:
+    """Tahmin, sorunun kabul edilen cevaplarından biriyle eşleşiyor mu? Eşleşmenin türünü döndürür.
+
+    İsteğe bağlı iki YAML alanı (yalnızca gerçekten belirsiz sorularda kullanılır):
+    - kabul_edilen: ek referans SQL listesi. Sorunun birden fazla makul yorumu varsa
+      her yorumun cevabı ayrı bir referanstır; herhangi biriyle eşleşen geçer.
+    - ilk_satir: true. Tek satır beklenen bir soruda ("en çok satan ay hangisi") model
+      tüm satırları sıralı döndürürse, ilk satırı doğruysa geçer.
+    """
+    refs = [("referans", item["referans_sql"])]
+    refs += [(f"kabul_edilen[{i}]", sql) for i, sql in enumerate(item.get("kabul_edilen") or [])]
+    for label, sql in refs:
+        gold = run_sql(db_path, sql)
+        if results_match(gold, pred, item["sirali"]):
+            return label
+        if item.get("ilk_satir") and len(gold) == 1 and len(pred) > 1 \
+                and results_match(gold, pred.head(1)):
+            return f"{label} (ilk satır)"
+    return None
 
 
 def evaluate_repeated(item: dict, db_path: Path, runs: int, answer_fn=answer) -> dict:
@@ -226,6 +249,9 @@ def main() -> int:
     items = load_questions(SETS[args.set])
     if args.only:
         items = [item for item in items if item["id"] in args.only]
+    if not items:
+        print(f"'{args.set}' setinde soru yok ({SETS[args.set].relative_to(ROOT)}).")
+        return 1
 
     if args.check_gold:
         check_gold(items)

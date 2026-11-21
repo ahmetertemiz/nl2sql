@@ -27,7 +27,10 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 | `test_nl2sql.py` | API anahtarı gerektirmeyen testler (`python -m pytest -q`) |
 | `test_app.py` | Arayüz testleri: model yalnızca Gönder'e basılınca çağrılıyor mu, grafik ve SQL gösterimi (sahte model, API anahtarı gerektirmez) |
 | `evals/questions.yaml` | 20 soruluk değerlendirme seti: soru, referans SQL, zorluk (kolay/orta/zor), kategori |
-| `evals/holdout.yaml` | 20 soruluk ayrı test seti: gerçekçi, dağınık sorular; yalnızca ölçmek için (prompt bu sete göre değiştirilmez) |
+| `evals/holdout.yaml` | 20 soruluk ayrı test seti v1: gerçekçi, dağınık sorular; yalnızca ölçmek için. **Donduruldu** (2026-11-21), bir test içeriğini korur |
+| `evals/holdout_v2.yaml` | Yeni ayrı test seti için boş şablon |
+| `evals/HOLDOUT_KILAVUZU.md` | Holdout sorusu yazım kılavuzu: alanlar, belirsiz soruda alternatif yorum |
+| `evals/RAPOR.md` | Değerlendirme raporu |
 | `evals/run_evals.py` | Soruları modele sorar, sonucu referansla karşılaştırır, doğruluğu toplam ve zorluğa göre yazar |
 | `test_run_evals.py` | Karşılaştırma mantığının ve soru setinin testleri (API anahtarı gerektirmez) |
 
@@ -51,6 +54,7 @@ python evals/run_evals.py --set holdout --runs 3   # ayrı test seti, her soru 3
 
 - Sütun adları, sütun sırası ve fazladan sütunlar yok sayılır.
 - Satır sırası yalnızca `sirali: true` olan sorularda (soru sıralama istiyorsa) önemlidir.
+- Belirsiz sorular için iki isteğe bağlı alan var: `kabul_edilen` (başka makul yorumların referans SQL'leri; herhangi biriyle eşleşen geçer) ve `ilk_satir: true` (tek satır beklenen soruda, sıralı listenin ilk satırı doğruysa geçer).
 - Ondalıklı sayılarda %0.5 göreli tolerans vardır: `ROUND(..., 1)` ile yuvarlanmış doğru bir cevap yanlış sayılmaz. İki değer de tam sayıysa (sayım gibi) birebir eşit olmalıdır.
 - "Bugün" 2026-11-20'ye sabitlenmiştir (`seed_db.py` ile aynı); "geçen ay", "son 3 ay" gibi sorular her gün aynı cevabı verir.
 

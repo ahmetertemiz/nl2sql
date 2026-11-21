@@ -6,6 +6,9 @@
 #   zorluk        kolay | orta | zor
 #   kategori      filtreleme | gruplama | join | tarih | oran | cevaplanamaz
 #   sirali        true ise satır sırası da karşılaştırılır (soru sıralama istiyorsa)
+#   kabul_edilen  (isteğe bağlı) ek referans SQL listesi; sorunun başka makul yorumları için
+#   ilk_satir     (isteğe bağlı) true: tek satır beklenen soruda sıralı listenin ilk satırı yeterli
+#                 Bu iki alan yalnızca gerçekten belirsiz sorularda, gerekçesiyle kullanılır.
 #
 # "Bugün" 2026-11-20 olarak sabittir (seed_db.py ile aynı): "geçen ay" = Ekim 2026.
 # Karşılaştırma sonuç üzerinden yapılır: modelin SQL'i farklı olabilir, sonuç aynı olmalı.
@@ -157,6 +160,9 @@
   sirali: false
 
 - id: 17
+  # ilk_satir: "hangi şehir" tek satır bekler, ama tüm şehirleri orana göre azalan sırada
+  # listelemek de soruyu cevaplar (ilk satır en yüksek olandır). Liste doğru sıralıysa geçer.
+  ilk_satir: true
   soru: Müşterilerinin siparişlerinde iade oranı en yüksek olan şehir hangisi? Şehri ve iade oranını yüzde olarak göster.
   referans_sql: >-
     SELECT c.city, 100.0 * SUM(o.status = 'iade') / COUNT(*) AS oran

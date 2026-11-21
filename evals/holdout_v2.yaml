@@ -1,0 +1,24 @@
+# AYRI TEST SETİ v2 (holdout) — yalnızca ÖLÇMEK içindir. Yazım kılavuzu: evals/HOLDOUT_KILAVUZU.md
+#
+# Soruları prompt'u ve questions.yaml'ı görmeden yaz. Bu sete bakarak SYSTEM_PROMPT değiştirilmez.
+# id'ler 201'den başlar (questions: 1-20, holdout v1: 101-120).
+# Çalıştır: python evals/run_evals.py --set holdout_v2 --check-gold   (önce referansları doğrula)
+#
+# Şablon (kopyala, # işaretlerini kaldır, doldur):
+#
+# - id: 201
+#   soru: gerçek bir kullanıcının yazacağı gibi, yazım hatası dahil
+#   referans_sql: >-
+#     SELECT ...
+#   yorum: Soru belirsizse referansın hangi yorumu seçtiği (zorunlu değil)
+#   kabul_edilen:            # isteğe bağlı: başka makul yorumların cevapları
+#     - >-
+#       SELECT ...
+#   ilk_satir: false         # isteğe bağlı: tek satırlık soruda sıralı listenin ilk satırı yeterliyse true
+#   zorluk: orta             # kolay | orta | zor
+#   kategori: belirsiz       # serbest etiket: belirsiz, pencere, iki-adim, ayni-ad, cevaplanamaz...
+#   sirali: false            # soru açıkça sıralama istiyorsa true
+#
+# Cevaplanamaz soru: referans_sql: null  (beklenen davranış: model SQL üretmez)
+
+[]
