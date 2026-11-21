@@ -8,7 +8,7 @@ import streamlit as st
 
 import seed_db
 from charts import make_chart
-from nl2sql import answer, get_schema, list_columns
+from nl2sql import answer, format_sql, get_schema, list_columns
 
 DB_PATH = Path(__file__).parent / "shop.db"
 EXAMPLES = [
@@ -132,7 +132,7 @@ if last:
 
     if result["sql"]:
         with st.expander("Üretilen SQL", expanded=True):
-            st.code(result["sql"], language="sql")
+            st.code(format_sql(result["sql"]), language="sql")  # yalnızca gösterim biçimlenir
 
     if result["error"]:
         st.error(f"Sorgu çalıştırılamadı: {result['error']}")

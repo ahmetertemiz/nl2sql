@@ -339,6 +339,17 @@ def run_sql(db_path: Path, sql: str, allowed: Allowed | None = None,
             raise
 
 
+def format_sql(sql: str) -> str:
+    """Yalnızca GÖSTERİM için: satırlara böl, girintile, anahtar kelimeleri büyük harf yap.
+
+    Çalıştırılan sorgu bu değil; run_sql her zaman modelin ürettiği metni alır.
+    Metin sabitleri ('iade' gibi) olduğu gibi kalır.
+    """
+    import sqlparse
+
+    return sqlparse.format(sql, reindent=True, keyword_case="upper").strip()
+
+
 def parse_llm_json(text: str) -> dict:
     """Model bazen JSON'u ```json bloğuna sarar; ilk { ... } gövdesini al."""
     match = re.search(r"\{.*\}", text, re.DOTALL)

@@ -83,6 +83,26 @@ def test_chart_is_drawn_with_altair_in_sql_order(monkeypatch):
     assert spec["encoding"]["x"]["sort"] is None   # alfabetik değil, SQL sırası
 
 
+def test_sql_shown_formatted_but_run_unchanged(monkeypatch):
+    raw = "select city, count(*) as n from customers group by city"
+    seen = []
+
+    def fake_answer(question, db_path, today, allowed=None, value_columns=None, **_):
+        df = nl2sql.run_sql(db_path, raw, allowed)   # çalıştırılan: modelin ham metni
+        seen.append(raw)
+        return {"sql": raw, "explanation": "", "chart": "none", "x": None, "y": None,
+                "df": df, "error": None}
+
+    monkeypatch.setattr(nl2sql, "answer", fake_answer)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    at = open_app()
+    at.text_input(key="question").input("Şehirlere göre müşteri?")
+    submit_button(at).click().run()
+    shown = at.main.code[0].value   # kenar çubuğundaki şema da bir kod bloğu; ana alandakini al
+    assert shown.startswith("SELECT city,") and "\nFROM customers" in shown
+    assert seen == [raw]
+
+
 def test_example_button_calls_model(calls):
     at = open_app()
     example = next(b for b in at.button if b.label.startswith("Aylara"))

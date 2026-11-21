@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import seed_db
-from nl2sql import QueryTimeout, UnsafeSQL, check_access, get_schema, list_columns, parse_llm_json, response_text, run_sql, validate_sql
+from nl2sql import QueryTimeout, UnsafeSQL, check_access, format_sql, get_schema, list_columns, parse_llm_json, response_text, run_sql, validate_sql
 
 
 @pytest.fixture(scope="module")
@@ -244,6 +244,20 @@ def test_slow_query_is_stopped_with_allowlist_too(db):
 
 def test_normal_query_unaffected_by_timeout(db):
     assert run_sql(db, "SELECT COUNT(*) AS n FROM order_items", timeout=0.5)["n"][0] > 0
+
+
+def test_format_sql_reindents_and_uppercases_keywords():
+    raw = "select c.city, count(*) as n from customers c where c.city = 'izmir' group by c.city"
+    out = format_sql(raw)
+    assert out.splitlines()[0].startswith("SELECT")
+    assert "\nFROM customers c" in out and "\nWHERE" in out and "\nGROUP BY" in out
+    assert "'izmir'" in out                       # metin sabitine dokunulmaz
+
+
+def test_formatted_sql_returns_same_result(db):
+    raw = ("select p.category, sum(oi.quantity) as adet from order_items oi join products p "
+           "on p.id = oi.product_id group by p.category order by adet desc")
+    assert run_sql(db, format_sql(raw)).equals(run_sql(db, raw))
 
 
 def test_response_text_skips_thinking_blocks():

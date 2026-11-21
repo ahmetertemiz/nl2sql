@@ -47,7 +47,7 @@ python evaluate.py --only 21      # yalnızca seçilen soruları sorar
 1. Kullanıcı kenar çubuğunda modelin görebileceği tablo ve sütunları seçer (varsayılan: hiçbiri).
 2. Yalnızca seçilen sütunların şeması (`CREATE TABLE` ifadeleri) modele bağlam olarak verilir. Veri satırları modele hiç gönderilmez; "Modele gönderilen şema" bölümü tam olarak neyin gittiğini gösterir.
    - İstisna: kullanıcı durum, kategori gibi sütunları "Değerleri modele gösterilecek sütunlar" listesinden işaretlerse, bu sütunların farklı değerleri şemaya yorum olarak eklenir (ör. `-- değerler: 'iade', 'iptal', 'tamamlandi'`), böylece model `WHERE` koşulunda doğru değeri yazar. 20'den fazla farklı değeri olan sütunların (ad, e-posta gibi) değerleri gönderilmez; her değer 40 karakterle kesilir.
-3. Model soruyu JSON olarak döndürür: SQL, açıklama ve grafik önerisi.
+3. Model soruyu JSON olarak döndürür: SQL, açıklama ve grafik önerisi. Arayüz SQL'i okunaklı olsun diye `sqlparse` ile biçimlendirip gösterir; çalıştırılan sorgu modelin ürettiği metnin kendisidir.
 4. SQL dört katmanda denetlenir:
    - `validate_sql` yalnızca tek bir `SELECT`'e izin verir.
    - `check_access` SQL'i [sqlglot](https://github.com/tobymao/sqlglot) ile ayrıştırır, takma adları ve alt sorguları gerçek tablolara bağlar, izin listesi dışındaki her tablo/sütunu adıyla bildirerek reddeder. Gizli sütunu olan bir tabloda `SELECT *` ve `tablo.*` yasaktır.
