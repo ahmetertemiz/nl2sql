@@ -368,7 +368,13 @@ def test_missing_or_bad_assumptions_become_empty_list(raw):
 def test_prompt_asks_for_empty_assumptions_on_clear_questions():
     from nl2sql import SYSTEM_PROMPT
     assert '"assumptions"' in SYSTEM_PROMPT and "boş liste []" in SYSTEM_PROMPT
-    assert "uydurma" in SYSTEM_PROMPT
+    # Ölçüt: başka bir yorum beklenebilir mi VE farklı bir sayı verir mi?
+    assert "İkisi de evet değilse yazma" in SYSTEM_PROMPT
+    assert "En fazla 2 madde" in SYSTEM_PROMPT
+    # Dört gürültü türü açıkça yasak
+    for phrase in ("tekrar etmek", "teknik ayrıntılar", "gerçekleşmeyen kenar durumlar",
+                   "Yapmadığın bir işlemi"):
+        assert phrase in SYSTEM_PROMPT
     SYSTEM_PROMPT.format(schema="x", today="y")   # süslü parantezler bozulmamış olmalı
 
 

@@ -37,13 +37,16 @@ Kurallar:
 - Soru şemayla cevaplanamıyorsa sql alanını boş bırak ve nedenini explanation'da yaz.
 
 Varsayımlar (assumptions):
-- Soruda açıkça söylenmeyen ama SONUCU DEĞİŞTİREN her kararı kısa bir madde olarak yaz.
-  Örnekler: hangi sipariş durumlarının sayıldığı, göreli bir tarih aralığının sınırları,
-  "en iyi" gibi belirsiz bir ölçütün nasıl tanımlandığı.
-- Soru bu ayrıntıları zaten belirtiyorsa ya da tek makul yorum varsa boş liste [] döndür.
-  Her soruya varsayım uydurma: gereksiz varsayım kullanıcının dikkatini asıl belirsizlikten dağıtır.
-- Sütun adı, takma ad, sıralama yönü, yuvarlama gibi sonucu değiştirmeyen teknik ayrıntıları yazma.
-- En fazla 3 madde. sql boşsa assumptions da boş olsun.
+- Bir kararı yazmadan önce iki soru sor: (1) Makul bir kullanıcı bu soruda başka bir yorum
+  bekleyebilir miydi? (2) O yorum bu veride farklı bir sayı verir miydi? İkisi de evet değilse yazma.
+- Şunları YAZMA:
+  - Soruda zaten söyleneni tekrar etmek (soru "tamamlanan" diyorsa "yalnızca tamamlananlar sayıldı" yazma).
+  - Sonucu değiştirmeyen teknik ayrıntılar: değerin yazımı, sütun/takma ad, sıralama, yuvarlama,
+    eşitlik durumunda hangi satırın seçileceği.
+  - Bu veride gerçekleşmeyen kenar durumlar ("... olursa", "... çıkabilir" gibi varsayımsal ifadeler).
+  - Yapmadığın bir işlemi bildirmek ("tarih filtresi uygulanmadı" gibi): soru istemediyse söyleme.
+- Hiçbiri yoksa boş liste [] döndür; tam belirtilmiş sorularda doğru cevap budur.
+- En fazla 2 madde. sql boşsa assumptions da boş olsun.
 
 Yalnızca şu JSON'u döndür, başka hiçbir şey yazma:
 {{"sql": "...", "explanation": "sorgunun ne yaptığını 1-2 cümleyle anlat",
