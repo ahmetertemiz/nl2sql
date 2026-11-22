@@ -66,7 +66,7 @@ The sample databases (`shop.db`, `shop_en.db`) are created on first run; `python
 Anyone with the link can ask questions with the server's key, so there are three safeguards:
 
 1. **Spending limit (the real safeguard).** Set a monthly limit on the key's workspace in the Anthropic Console.
-2. **Daily call limit.** `NL2SQL_DAILY_LIMIT` caps the total model calls (questions + interpretations) per day with the shared key, e.g. `100`. Unset or `0` means no limit. The counter is in memory and resets on restart.
+2. **Daily call limit.** `NL2SQL_DAILY_LIMIT` caps the total model calls per day with the shared key, e.g. `100`. Every question, every automatic retry after a SQL error, and every interpretation uses one call; when no call is left, the retry is skipped and the first error is shown. Unset or `0` means no limit. The counter is in memory and resets on restart.
 3. **Visitor's own key.** A visitor can enter their own key in the sidebar; their calls skip the daily limit. The key is kept only in that browser session.
 
 On Streamlit Community Cloud, put `ANTHROPIC_API_KEY` and `NL2SQL_DAILY_LIMIT` in the app's Secrets as top-level keys. Never commit the key.

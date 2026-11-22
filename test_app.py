@@ -261,6 +261,38 @@ def test_no_server_key_asks_for_own_key_then_works(key_calls, monkeypatch):
     assert key_calls[-1]["api_key"] == "sk-ant-ziyaretci"
 
 
+def _retrying_answer(log):
+    """SQL'i ilk denemede hata veren, ikinci model çağrısı için hak isteyen sahte answer."""
+    def fake(question, db_path, today, allow_retry=None, **_):
+        retried = allow_retry()
+        log.append(retried)
+        return {"sql": "SELECT 1 AS n" if retried else "SELECT nope", "explanation": "", "chart": "none",
+                "x": None, "y": None, "df": pd.DataFrame({"n": [1]}) if retried else None,
+                "error": None if retried else "no such column: nope"}
+    return fake
+
+
+def test_retry_also_uses_daily_quota(key_calls, monkeypatch):
+    import quota
+
+    log = []
+    monkeypatch.setattr(nl2sql, "answer", _retrying_answer(log))
+    monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "2")
+    at = asked(open_app())
+    assert log == [True]                                     # ilk çağrı + yeniden deneme = 2 hak
+    assert not quota.take(2)                                 # hak kalmadı
+    quota.reset()
+
+
+def test_retry_skipped_when_quota_runs_out(key_calls, monkeypatch):
+    log = []
+    monkeypatch.setattr(nl2sql, "answer", _retrying_answer(log))
+    monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "1")
+    at = asked(open_app())
+    assert log == [False]                                    # tek hak ilk çağrıya gitti
+    assert any("no such column: nope" in e.value for e in at.error)   # ilk hata gösterildi
+
+
 def test_daily_limit_also_covers_interpret(key_calls, comments, monkeypatch):
     monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "1")
     at = open_app()

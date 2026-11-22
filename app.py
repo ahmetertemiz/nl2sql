@@ -131,7 +131,8 @@ if (submitted or st.session_state.pop("run_now", False)) and question:
     with st.spinner(t(lang, "generating")):
         try:
             result = answer(question, DB_PATH, today=TODAY, allowed=allowed,
-                            value_columns=value_columns, api_key=user_key, lang=lang)
+                            value_columns=value_columns, api_key=user_key, lang=lang,
+                            allow_retry=may_call_model)  # yeniden deneme de bir hak harcar
         except Exception as exc:
             st.error(t(lang, "model_failed", error=exc))
             st.stop()

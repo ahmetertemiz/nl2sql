@@ -403,3 +403,48 @@ def test_prompts_answer_in_language_of_question():
 def test_parse_json_in_code_fence():
     out = parse_llm_json('```json\n{"sql": "SELECT 1", "explanation": "x", "chart": "pie"}\n```')
     assert out["sql"] == "SELECT 1" and out["chart"] == "none"
+
+
+# --- Yeniden deneme ve günlük sınır: her model çağrısı bir hak ---
+
+def _fake_generate(monkeypatch, sqls):
+    """generate_sql yerine sırayla verilen SQL'leri 'üreten' sahte model; çağrıları sayar."""
+    import nl2sql
+
+    seen = []
+
+    def fake(question, schema, today, error_feedback=None, **_):
+        seen.append(error_feedback)
+        return {"sql": sqls[len(seen) - 1], "explanation": "", "assumptions": [], "chart": "none",
+                "x": None, "y": None}
+
+    monkeypatch.setattr(nl2sql, "generate_sql", fake)
+    return seen
+
+
+def test_retry_happens_when_allowed(db, monkeypatch):
+    import nl2sql
+
+    seen = _fake_generate(monkeypatch, ["SELECT nope FROM customers", "SELECT COUNT(*) AS n FROM customers"])
+    asks = []
+    result = nl2sql.answer("?", db, today="2026-11-20", allow_retry=lambda: asks.append(1) or True)
+    assert len(seen) == 2 and asks == [1]                  # ikinci çağrıdan önce hak istendi
+    assert "nope" in seen[1] and result["error"] is None and result["df"]["n"][0] == 200
+
+
+def test_no_retry_without_quota_shows_first_error(db, monkeypatch):
+    import nl2sql
+
+    seen = _fake_generate(monkeypatch, ["SELECT nope FROM customers", "SELECT 1"])
+    result = nl2sql.answer("?", db, today="2026-11-20", allow_retry=lambda: False)
+    assert len(seen) == 1                                  # model ikinci kez çağrılmadı
+    assert result["sql"] == "SELECT nope FROM customers" and "nope" in result["error"]
+
+
+def test_successful_query_does_not_ask_for_retry(db, monkeypatch):
+    import nl2sql
+
+    _fake_generate(monkeypatch, ["SELECT 1 AS n"])
+    asks = []
+    nl2sql.answer("?", db, today="2026-11-20", allow_retry=lambda: asks.append(1) or True)
+    assert asks == []

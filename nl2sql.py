@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import time
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -573,11 +574,14 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
 
 def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
            allowed: Allowed | None = None, value_columns: Allowed | None = None,
-           api_key: str | None = None, lang: str = i18n.DEFAULT_LANG) -> dict:
+           api_key: str | None = None, lang: str = i18n.DEFAULT_LANG,
+           allow_retry: Callable[[], bool] | None = None) -> dict:
     """Uçtan uca: soru -> SQL -> sonuç. SQL hata verirse modele hatayı gösterip bir kez daha dener.
 
     İzinsiz erişim (UnsafeSQL) ve süre aşımı (QueryTimeout) yeniden denenmez; kullanıcıya gösterilir.
     lang: dönen "error" metninin dili (arayüz dili).
+    allow_retry: her yeniden denemeden (yani ikinci model çağrısından) önce sorulur. False dönerse
+    deneme yapılmaz ve ilk hata döner. Arayüz bunu günlük çağrı sınırına bağlar.
     """
     schema = get_schema(db_path, allowed, value_columns)
     completed = completed_status(db_path)
@@ -593,5 +597,5 @@ def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
             return {**result, "df": None, "error": error_message(exc, lang)}
         except Exception as exc:  # SQL sözdizimi / olmayan sütun vb.
             feedback = f"SQL: {result['sql']}\nError: {exc}"
-            if attempt == max_retries:
+            if attempt == max_retries or (allow_retry is not None and not allow_retry()):
                 return {**result, "df": None, "error": error_message(exc, lang)}
