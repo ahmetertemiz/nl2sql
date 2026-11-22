@@ -38,7 +38,7 @@ Model `claude-sonnet-5-5`. Metric: execution accuracy (the generated SQL returns
 
 The model never gets write access, and never sees columns the user did not allow.
 
-1. **Schema allowlist.** Only the selected tables and columns are sent to the model as `CREATE TABLE` statements. No data rows are sent while generating SQL. Optionally, the distinct values of low-cardinality columns (status, category) can be shown, capped at 20 values of 40 characters each.
+1. **Schema allowlist.** Only the selected tables and columns are sent to the model as `CREATE TABLE` statements. All columns are selected when the page opens, so a visitor can try an example question right away; any table or column can be turned off. No data rows are sent while generating SQL. Optionally, the distinct values of low-cardinality columns (status, category) can be shown, capped at 20 values of 40 characters each.
 2. **`validate_sql`.** Only a single `SELECT` (or `WITH ... SELECT`) is allowed; data-modifying keywords are rejected.
 3. **`check_access`.** The SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot); aliases, subqueries and CTEs are resolved to real tables, and any table or column outside the allowlist is rejected by name. `SELECT *` and `table.*` are refused on tables with hidden columns.
 4. **SQLite authorizer.** `set_authorizer` enforces the same allowlist inside the database at compile time, as a backstop for anything the parser misses.

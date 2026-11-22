@@ -31,7 +31,14 @@ def open_app(lang: str = "tr") -> AppTest:
     at = AppTest.from_file("app.py", default_timeout=30)
     at.session_state["lang"] = lang
     at.run()
+    clear_all(at)
     at.multiselect(key="cols_customers").set_value(["id", "city"]).run()
+    return at
+
+
+def clear_all(at: AppTest) -> AppTest:
+    """İlk açılışta her şey seçili; testler dar bir izinle başlasın diye önce hepsini kapat."""
+    next(b for b in at.sidebar.button if b.label in ("Tümünü kapat", "Clear all")).click().run()
     return at
 
 
@@ -271,7 +278,35 @@ def test_default_language_is_english(calls):
     at.run()
     assert at.selectbox(key="lang").value == "en"
     assert at.title[0].value == "Ask Your Data in Plain Language"
+
+
+def test_all_columns_selected_on_first_open(calls):
+    import seed_db
+    from nl2sql import list_columns
+
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.run()
+    expected = list_columns(seed_db.DB_PATHS["en"])
+    for table, cols in expected.items():
+        assert at.multiselect(key=f"cols_{table}").value == cols
+    assert not at.info                                       # "sütun seç" uyarısı yok
+    next(b for b in at.button if b.label.startswith("Which 5 products")).click().run()
+    assert len(calls) == 1 and calls[0]["allowed"] == expected
+
+
+def test_clear_all_and_single_removal_stay_off(calls):
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.run()
+    at.multiselect(key="cols_customers").unselect("name").run()
+    at.run()                                                 # yeniden çalışınca geri seçilmez
+    assert "name" not in at.multiselect(key="cols_customers").value
+    clear_all(at)
+    at.run()
+    assert all(not m.value for m in at.sidebar.multiselect)
     assert any("select the columns" in i.value for i in at.info)
+    assert not any(b.label.startswith("Which 5 products") for b in at.button)
+    at.selectbox(key="lang").set_value("tr").run()            # dil değişince de kapalı kalır
+    assert all(not m.value for m in at.sidebar.multiselect)
 
 
 def test_switching_language_changes_texts(calls):
@@ -321,6 +356,7 @@ def test_multiselect_placeholders_are_translated(calls):
     at = AppTest.from_file("app.py", default_timeout=30)
     at.session_state["lang"] = "tr"
     at.run()
+    clear_all(at)
     assert at.multiselect(key="cols_customers").proto.placeholder == "Sütun seç"
     assert at.multiselect(key="value_cols").proto.placeholder == "Önce yukarıdan sütun seç"
     at.multiselect(key="cols_customers").set_value(["city"]).run()

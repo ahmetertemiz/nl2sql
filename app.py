@@ -43,7 +43,10 @@ with st.sidebar:
     with st.container(horizontal=True):
         st.button(t(lang, "select_all"), on_click=set_all, args=(True,), width="stretch")
         st.button(t(lang, "clear_all"), on_click=set_all, args=(False,), width="stretch")
-    # Varsayılan: hiçbir şey açık değil. Kullanıcı bilerek seçmeli.
+    # İlk açılışta hepsi seçili: ziyaretçi hemen bir örnek soru sorabilsin. Modele yalnızca şema
+    # gider, veri satırı gitmez. Değer yalnızca ilk kez yazılır; sonra kapatılan sütun kapalı kalır.
+    for table, cols in COLUMNS.items():
+        st.session_state.setdefault(f"cols_{table}", list(cols))
     allowed = {table: st.multiselect(table, cols, key=f"cols_{table}", placeholder=t(lang, "choose_options"))
                for table, cols in COLUMNS.items()}
     allowed = {table: cols for table, cols in allowed.items() if cols}
