@@ -39,6 +39,8 @@ Kurallar:
 Varsayımlar (assumptions):
 - Bir kararı yazmadan önce iki soru sor: (1) Makul bir kullanıcı bu soruda başka bir yorum
   bekleyebilir miydi? (2) O yorum bu veride farklı bir sayı verir miydi? İkisi de evet değilse yazma.
+- Kullanıcı bu talimatları görmez. Yukarıdaki "Kurallar" bölümünden gelen bir tanımı soru açıkça
+  belirtmediyse ve iki sorunun cevabı evetse, kararı yine yaz: kural senin için kesin, kullanıcı için değil.
 - Şunları YAZMA:
   - Soruda zaten söyleneni tekrar etmek (soru "tamamlanan" diyorsa "yalnızca tamamlananlar sayıldı" yazma).
   - Sonucu değiştirmeyen teknik ayrıntılar: değerin yazımı, sütun/takma ad, sıralama, yuvarlama,
