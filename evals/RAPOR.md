@@ -4,6 +4,52 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# İngilizce (2026-11-22, prompt commit cc78bad + d3829f6)
+
+Uygulama iki dilli oldu. Prompt'lar İngilizceye çevrildi; kuralların anlamı aynı kaldı. Eklenen tek kural: açıklama, varsayımlar, yorum ve sütun takma adları sorunun dilinde yazılır. Takvim kuralı artık dilden bağımsız. Ciro kuralındaki durum değeri ('tamamlandi' / 'completed') veritabanından okunuyor. İngilizce demo verisi (`shop_en.db`) aynı tohumla üretildi: sipariş, tarih, adet ve durum dağılımı `shop.db` ile birebir aynı; adlar, şehirler, kategoriler ve para birimi (USD) farklı.
+
+## Türkçe setler: prompt çevirisi doğruluğu bozdu mu?
+
+| Set | Önce (Türkçe prompt) | Sonra (İngilizce prompt, `--runs 1`) |
+|---|---|---|
+| questions | 60/60 (5. ölçüm, x3) | 20/20 |
+| holdout v1 | 53/60 (2. ölçüm, x3) | 19/20 |
+| holdout v2 | 60/60 (x3) | 20/20 |
+
+Bozmadı. Holdout v1'de kalan tek soru 115 ("ortalama sepet kaç ürün oluyor"). Model yine yalnızca tamamlanan siparişleri saydı; bu soru önceki ölçümlerde de 0/3'tü ve "belirsiz soru" olarak sınıflandırılmıştı.
+Sınırlar:
+- Sonra sütunu tek koşu; kararsız bir soru bu koşuda şanslı geçmiş olabilir.
+- Holdout v1'in "önce" değeri eski bir prompt'a (07299d0) ait.
+- Holdout v1 bu turda üçüncü kez ölçüldü. Ayar için kullanılmış sayıldığından buradaki sonuç yalnızca "bozulma yok" kontrolü.
+
+Türkçe sorularda açıklama, varsayımlar ve takma adlar (ör. `ortalama_sepet_urun_adedi`) Türkçe kaldı. Varsayım oranları (tek koşu):
+
+| Set | Beklenmeyen sorularda boş liste | Beklenen sorularda dolu liste |
+|---|---|---|
+| questions | 13/13 (5. ölçümde %97,4) | 7/7 (5. ölçümde %100) |
+| holdout v2 | 3/6 (önce %50) | 14/14 (önce %100) |
+
+## İngilizce set (questions_en, `--runs 3`)
+
+`evals/questions_en.yaml`: questions.yaml'daki 20 sorunun İngilizce karşılığı, `shop_en.db` üzerinde. Etiketler aynı. Referanslar `--check-gold` ile çalışıyor. Fiyattan bağımsız 13 soru Türkçe karşılığıyla birebir aynı sonucu veriyor. Fiyat ya da ciro içeren 3, 7, 8, 13 ve 14 USD olduğu için farklı sayı veriyor; 3. soru aynı 8 ürünü seçiyor. Ham sonuç: `2026-11-22_180111_questions_en_x3.json`.
+
+| Ölçüt | questions_en (İngilizce) | questions (Türkçe, 5. ölçüm) |
+|---|---|---|
+| Doğruluk | **60/60 (%100)** | 60/60 |
+| — kolay / orta / zor | 21/21 · 21/21 · 18/18 | |
+| Kararsız / hep kalan | yok / yok | yok / yok |
+| Beklenmeyen sorularda boş liste | **39/39 (%100)** | 38/39 (%97,4) |
+| Beklenen sorularda dolu liste | **20/21 (%95,2)** | 21/21 (%100) |
+| Denemeler arası tutarsız soru | 1 (18) | 1 (9) |
+
+- Tek eksik: 18'in bir denemesinde ("her kategoride iade edilen siparişlerin yüzdesi") paydaya iptallerin de girdiği yazılmadı. Diğer iki denemede yazıldı.
+- Model İngilizce sorularda açıklamayı, varsayımları ve takma adları (`total_revenue`, `customer_name`) İngilizce yazdı. Ciro kuralını `status = 'completed'` ile uyguladı ve bunu her denemede varsayım olarak bildirdi.
+- 8. soruda aynı adlı müşteriler var (ör. 5 "Noah Brown"; Türkçe veride de aynı yapı). Model üç denemede de müşteri kimliğine göre grupladı.
+
+**Yorum.** Dil değişimi doğruluğu ve varsayım davranışını etkilemedi. Bu sonuç ayar setinin çevirisiyle alındı: questions_en, questions.yaml'ın birebir karşılığı olduğu için genelleme ölçüsü değil. İngilizce için görülmemiş bir holdout seti henüz yok.
+
+---
+
 # Holdout v2 (2026-11-22, prompt commit cda1df7)
 
 20 yeni soru (201–220). Sohbetteki Claude yazdı, referanslar shop.db üzerinde doğrulandı (commit 355804c). Prompt'u ayarlarken bu sorular görülmedi. Bu ölçümden sonra da sorular, referanslar, etiketler ve prompt değiştirilmedi.
