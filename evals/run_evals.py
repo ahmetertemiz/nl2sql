@@ -188,10 +188,14 @@ def evaluate_repeated(item: dict, db_path: Path, runs: int, answer_fn=answer) ->
     tek koşu şanslı ya da şanssız olabilir."""
     attempts = [evaluate_one(item, db_path, answer_fn) for _ in range(runs)]
     passed = sum(a["gecti"] for a in attempts)
+    filled = [bool(a.get("varsayimlar")) for a in attempts]  # her denemede liste dolu mu?
     return {"id": item["id"], "soru": item["soru"], "zorluk": item["zorluk"],
             "kategori": item["kategori"], "referans_sql": item["referans_sql"],
             "yorum": item.get("yorum", ""), "gecen": passed, "kosu": runs,
-            "kararsiz": 0 < passed < runs, "denemeler": attempts}
+            "kararsiz": 0 < passed < runs, "denemeler": attempts,
+            "varsayim_beklenir": item.get("varsayim_beklenir"),  # etiket yoksa None
+            "varsayim_dolu": filled,
+            "varsayim_tutarsiz": 0 < sum(filled) < len(filled)}  # bazen dolu, bazen boş
 
 
 def summarize(records: list[dict]) -> dict:
@@ -204,7 +208,32 @@ def summarize(records: list[dict]) -> dict:
     return {"toplam": rate(records),
             "zorluk": {lvl: rate([r for r in records if r["zorluk"] == lvl]) for lvl in LEVELS},
             "kararsiz": [r["id"] for r in records if r["kararsiz"]],
-            "hep_kalan": [r["id"] for r in records if r["gecen"] == 0]}
+            "hep_kalan": [r["id"] for r in records if r["gecen"] == 0],
+            "varsayim": assumption_stats(records)}
+
+
+def assumption_stats(records: list[dict]) -> dict | None:
+    """Varsayım listesinin ne kadar isabetli doldurulduğu (deneme düzeyinde).
+
+    - bos_beklenmeyende: varsayım BEKLENMEYEN (tam belirtilmiş) sorularda boş liste oranı.
+      Yüksek olmalı; düşükse model gereksiz varsayım yazıyor.
+    - dolu_beklenende: varsayım BEKLENEN (belirsiz) sorularda dolu liste oranı.
+      Yüksek olmalı; düşükse model gerçek belirsizlikleri sessizce geçiyor.
+    - tutarsiz: aynı soruda listenin bazı denemelerde dolu, bazılarında boş olduğu sorular.
+    Sorularda varsayim_beklenir etiketi yoksa (ör. holdout v1) None.
+    """
+    labeled = [r for r in records if r.get("varsayim_beklenir") is not None]
+    if not labeled:
+        return None
+
+    def rate(flags):
+        return {"sayi": sum(flags), "toplam": len(flags),
+                "yuzde": round(100 * sum(flags) / len(flags), 1) if flags else None}
+
+    unexpected = [not f for r in labeled if not r["varsayim_beklenir"] for f in r["varsayim_dolu"]]
+    expected = [f for r in labeled if r["varsayim_beklenir"] for f in r["varsayim_dolu"]]
+    return {"bos_beklenmeyende": rate(unexpected), "dolu_beklenende": rate(expected),
+            "tutarsiz": [r["id"] for r in labeled if r["varsayim_tutarsiz"]]}
 
 
 def side_by_side(left: str, right: str, width: int = 58) -> str:
@@ -276,6 +305,13 @@ def main() -> int:
         if s["toplam"]:
             print(f"  {lvl:<6} {s['gecen']}/{s['toplam']} = %{s['yuzde']}")
     print(f"Kararsız sorular: {summary['kararsiz'] or 'yok'}")
+    if summary["varsayim"]:
+        v = summary["varsayim"]
+        b, d = v["bos_beklenmeyende"], v["dolu_beklenende"]
+        print("\nVarsayımlar (deneme düzeyinde):")
+        print(f"  Varsayım beklenmeyen sorularda boş liste: {b['sayi']}/{b['toplam']} = %{b['yuzde']}")
+        print(f"  Varsayım beklenen sorularda dolu liste:   {d['sayi']}/{d['toplam']} = %{d['yuzde']}")
+        print(f"  Denemeler arası tutarsız sorular ({len(v['tutarsiz'])}): {v['tutarsiz'] or 'yok'}")
 
     failed = [r for r in records if r["gecen"] < r["kosu"]]
     if failed:

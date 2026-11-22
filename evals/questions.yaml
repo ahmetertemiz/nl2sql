@@ -9,6 +9,16 @@
 #   kabul_edilen  (isteğe bağlı) ek referans SQL listesi; sorunun başka makul yorumları için
 #   ilk_satir     (isteğe bağlı) true: tek satır beklenen soruda sıralı listenin ilk satırı yeterli
 #                 Bu iki alan yalnızca gerçekten belirsiz sorularda, gerekçesiyle kullanılır.
+#   varsayim_beklenir  true: modelin bir varsayım yazması beklenir; false: soru tam belirtilmiş,
+#                 varsayım listesi boş olmalı. Ölçüt: makul bir kullanıcı başka bir yorum
+#                 bekleyebilir miydi VE o yorum farklı bir sayı verir miydi? İkisi de evetse true.
+#                 - Ciro/satış sorusu sipariş durumunu belirtmiyorsa true (iptal/iade dahil mi?).
+#                 - "Tüm durumları say", "durumu önemli değil", "tamamlanan" diyorsa o konuda false.
+#                 - "Geçen ay" = bir önceki takvim ayı (Türkçede yerleşik kullanım), tek başına true yapmaz.
+#                 - Cevaplanamaz sorular false (SQL yoksa varsayım da yok).
+#                 Etiketler 7, 8, 13, 14, 15, 17, 18 için true; diğerleri false.
+#                 (7, 8, 13, 14: ciroya hangi durumlar girer; 15: hiç satılmayan ürünler dahil mi;
+#                  17, 18: oranın paydasına iptal edilen siparişler girer mi.)
 #
 # "Bugün" 2026-11-20 olarak sabittir (seed_db.py ile aynı): "geçen ay" = Ekim 2026.
 # Karşılaştırma sonuç üzerinden yapılır: modelin SQL'i farklı olabilir, sonuç aynı olmalı.
@@ -17,6 +27,7 @@
   soru: Toplam kaç müşteri var?
   referans_sql: SELECT COUNT(*) FROM customers
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: filtreleme
   sirali: false
 
@@ -24,6 +35,7 @@
   soru: Ankara'da yaşayan kaç müşteri var?
   referans_sql: SELECT COUNT(*) FROM customers WHERE city = 'Ankara'
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: filtreleme
   sirali: false
 
@@ -31,6 +43,7 @@
   soru: Liste fiyatı 1000 TL'nin üzerinde olan ürünlerin adı ve fiyatı nedir?
   referans_sql: SELECT name, price FROM products WHERE price > 1000
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: filtreleme
   sirali: false
 
@@ -38,6 +51,7 @@
   soru: Kategorilere göre ürün sayısı nedir?
   referans_sql: SELECT category, COUNT(*) FROM products GROUP BY category
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: gruplama
   sirali: false
 
@@ -45,6 +59,7 @@
   soru: Sipariş durumlarına göre sipariş sayısı nedir?
   referans_sql: SELECT status, COUNT(*) FROM orders GROUP BY status
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: gruplama
   sirali: false
 
@@ -53,6 +68,7 @@
   referans_sql: >-
     SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id HAVING COUNT(*) >= 10)
   zorluk: orta
+  varsayim_beklenir: false
   kategori: gruplama
   sirali: false
 
@@ -63,6 +79,7 @@
     FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
     WHERE o.status = 'tamamlandi' GROUP BY p.category
   zorluk: orta
+  varsayim_beklenir: true
   kategori: join
   sirali: false
 
@@ -73,6 +90,7 @@
     FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id
     WHERE o.status = 'tamamlandi' GROUP BY c.id ORDER BY ciro DESC LIMIT 5
   zorluk: orta
+  varsayim_beklenir: true
   kategori: join
   sirali: true
 
@@ -85,6 +103,7 @@
     SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
     (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND strftime('%Y-%m', o.order_date) = '2026-10')
   zorluk: zor
+  varsayim_beklenir: false
   kategori: join
   sirali: false
 
@@ -96,6 +115,7 @@
     JOIN customers c ON c.id = o.customer_id JOIN products p ON p.id = oi.product_id
     WHERE c.city = 'İstanbul' AND o.status = 'tamamlandi' GROUP BY p.category
   zorluk: zor
+  varsayim_beklenir: false
   kategori: join
   sirali: false
 
@@ -103,6 +123,7 @@
   soru: Geçen ay kaç sipariş verildi? Tüm durumları say.
   referans_sql: SELECT COUNT(*) FROM orders WHERE strftime('%Y-%m', order_date) = '2026-10'
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: tarih
   sirali: false
 
@@ -115,6 +136,7 @@
     WHERE o.status = 'tamamlandi' AND strftime('%Y-%m', o.order_date) = '2026-10'
     GROUP BY p.id ORDER BY adet DESC LIMIT 4
   zorluk: orta
+  varsayim_beklenir: false
   kategori: tarih
   sirali: false
 
@@ -126,6 +148,7 @@
     WHERE o.status = 'tamamlandi' AND o.order_date >= '2026-08-01' AND o.order_date < '2026-11-01'
     GROUP BY ay ORDER BY ay
   zorluk: zor
+  varsayim_beklenir: true
   kategori: tarih
   sirali: true
 
@@ -137,6 +160,7 @@
     WHERE o.status = 'tamamlandi' AND strftime('%Y', o.order_date) = '2026'
     GROUP BY ay ORDER BY ay
   zorluk: orta
+  varsayim_beklenir: true
   kategori: tarih
   sirali: true
 
@@ -149,6 +173,7 @@
                WHERE o.status = 'tamamlandi' AND o.order_date = '2026-10-02') t ON t.product_id = p.id
     GROUP BY p.id HAVING adet < 3
   zorluk: zor
+  varsayim_beklenir: true
   kategori: tarih
   sirali: false
 
@@ -156,6 +181,7 @@
   soru: Tüm siparişlerin yüzde kaçı iade edildi?
   referans_sql: SELECT 100.0 * SUM(status = 'iade') / COUNT(*) FROM orders
   zorluk: orta
+  varsayim_beklenir: false
   kategori: oran
   sirali: false
 
@@ -169,6 +195,7 @@
     FROM orders o JOIN customers c ON c.id = o.customer_id
     GROUP BY c.city ORDER BY oran DESC LIMIT 1
   zorluk: zor
+  varsayim_beklenir: true
   kategori: oran
   sirali: false
 
@@ -179,6 +206,7 @@
     FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
     GROUP BY p.category
   zorluk: zor
+  varsayim_beklenir: true
   kategori: oran
   sirali: false
 
@@ -186,6 +214,7 @@
   soru: Müşterilerin e-posta adresleri neler?
   referans_sql: null
   zorluk: kolay
+  varsayim_beklenir: false
   kategori: cevaplanamaz
   sirali: false
 
@@ -193,5 +222,6 @@
   soru: Hangi ürünün depoda kaç adet stoğu kaldı?
   referans_sql: null
   zorluk: orta
+  varsayim_beklenir: false
   kategori: cevaplanamaz
   sirali: false

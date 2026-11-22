@@ -183,6 +183,44 @@ def test_summary_by_difficulty_and_unstable():
     assert s["kararsiz"] == [2] and s["hep_kalan"] == [3]
 
 
+def test_assumption_stats():
+    records = [  # beklenmeyen: 3 deneme hep boş + 3 denemede 1 dolu -> 5/6 boş
+        {"id": 1, "varsayim_beklenir": False, "varsayim_dolu": [False, False, False], "varsayim_tutarsiz": False},
+        {"id": 2, "varsayim_beklenir": False, "varsayim_dolu": [True, False, False], "varsayim_tutarsiz": True},
+        # beklenen: 3 denemenin 2'si dolu -> 2/3 dolu
+        {"id": 3, "varsayim_beklenir": True, "varsayim_dolu": [True, True, False], "varsayim_tutarsiz": True},
+        {"id": 4, "varsayim_beklenir": None, "varsayim_dolu": [True], "varsayim_tutarsiz": False},  # etiketsiz
+    ]
+    from evals.run_evals import assumption_stats
+    s = assumption_stats(records)
+    assert s["bos_beklenmeyende"] == {"sayi": 5, "toplam": 6, "yuzde": 83.3}
+    assert s["dolu_beklenende"] == {"sayi": 2, "toplam": 3, "yuzde": 66.7}
+    assert s["tutarsiz"] == [2, 3]
+
+
+def test_assumption_stats_none_without_labels():
+    from evals.run_evals import assumption_stats
+    assert assumption_stats([{"id": 1, "varsayim_dolu": [True]}]) is None
+
+
+def test_repeated_run_records_assumption_flags(db):
+    item = {"id": 1, "soru": "?", "referans_sql": "SELECT 1", "zorluk": "kolay", "kategori": "x",
+            "sirali": False, "varsayim_beklenir": False}
+    lists = iter([[], ["gereksiz"], []])
+
+    def model(question, db_path, today):
+        return {"sql": "SELECT 1", "explanation": "", "assumptions": next(lists),
+                "df": run_sql(db_path, "SELECT 1"), "error": None}
+
+    r = evaluate_repeated(item, db, runs=3, answer_fn=model)
+    assert r["varsayim_dolu"] == [False, True, False] and r["varsayim_tutarsiz"]
+
+
+def test_every_question_has_assumption_label():
+    assert all(isinstance(q.get("varsayim_beklenir"), bool) for q in QUESTIONS)
+    assert not any(q["varsayim_beklenir"] for q in QUESTIONS if q["referans_sql"] is None)
+
+
 # --- Göreli tolerans --------------------------------------------------------------
 def test_rounded_correct_answer_passes():
     # 14.917163 doğru cevap; model ROUND(..., 1) ile 14.9 döndürürse yine doğru sayılmalı
