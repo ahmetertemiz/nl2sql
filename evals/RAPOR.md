@@ -4,6 +4,25 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# 4. ölçüm — "kullanıcı bu talimatları görmez" maddesinden sonra (2026-11-22, commit 8d10ab0)
+
+3. ölçümde ciro sorularındaki varsayımın kaybolduğu görülmüştü. Olası neden: model prompt'taki ciro tanımını "soruda zaten söylenmiş" sayıyordu. Bunun için varsayım kuralına tek bir genel madde eklendi: kullanıcı talimatları görmez, bu yüzden "Kurallar" bölümünden gelen ve soruda açıkça belirtilmeyen bir tanım, iki sorunun cevabı evetse yine yazılır. Maddede ne ciro kelimesi ne de belirli bir soru geçiyor.
+Yalnızca questions seti koşuldu (`--runs 3`); holdout v1 koşulmadı. Ham sonuç: `2026-11-22_142829_questions_x3.json`.
+
+| Ölçüt | 2. ölçüm (07299d0) | 3. ölçüm (8932a8e) | 4. ölçüm (8d10ab0) |
+|---|---|---|---|
+| Doğruluk | 60/60 | 60/60 | 60/60 |
+| Beklenmeyen sorularda boş liste | 25/39 (%64,1) | 32/39 (%82,1) | 29/39 (%74,4) |
+| Beklenen sorularda dolu liste | 20/21 (%95,2) | 12/21 (%57,1) | **21/21 (%100)** |
+| Denemeler arası tutarsız soru | 2 (8, 16) | 4 (7, 8, 9, 13) | 1 (10) |
+
+- **Tahmin doğrulandı.** Ciro sorularının (7, 8, 13, 14) 12 denemesinin hepsinde "yalnızca tamamlanan siparişler sayıldı" varsayımı var. Beklenen 21 denemenin 21'i dolu ve tutarlı.
+- **Kalan gürültünün neredeyse tamamı tek tür.** Beklenmeyen sorulardaki 10 dolu listenin 9'u "geçen ay takvim ayı olarak alındı, son 30 gün değil" maddesi (9, 11, 12; 3/3). Onuncusu 10'da tek denemede çıkan "satışı olmayan kategoriler 0 adetle listelendi" maddesi.
+- **"Geçen ay" etiket ile model arasındaki bir anlaşmazlık.** Etiket ölçütü "geçen ay"ı Türkçedeki yerleşik anlamıyla belirsiz saymıyor. Model ise "son 30 gün"ü makul ve farklı sayı veren bir yorum sayıyor ve bunu üç denemede de tutarlı yapıyor. Bu ya prompt'a "geçen ay = önceki takvim ayı" tanımı ekleyerek çözülür (o zaman yeni madde gereği model bunu yine yazabilir), ya da etiket değiştirilerek. Bu bir tasarım kararı, burada yapılmadı.
+- 3. ölçümle karşılaştırınca boş liste oranı 82,1'den 74,4'e indi. Fark, 9'daki "geçen ay" maddesinin bir denemeden üç denemeye çıkmasından geliyor (+2). Bir de 10'da yeni çıkan tek madde var (+1).
+
+---
+
 # 3. ölçüm — varsayım kuralı sıkılaştırıldıktan sonra (2026-11-22, commit 8932a8e)
 
 Değişen tek şey prompt'taki varsayım kuralı. Yeni kural iki soruluk ölçütle başlıyor ("başka bir yorum beklenebilir miydi, farklı bir sayı verir miydi"). Dört gürültü türünü (soruyu tekrar etmek, sonucu değiştirmeyen teknik ayrıntı, gerçekleşmeyen kenar durum, yapılmayan işlemi bildirmek) açıkça yasaklıyor. Madde sınırı 3'ten 2'ye indi.
