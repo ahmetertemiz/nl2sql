@@ -20,5 +20,307 @@
 #   sirali: false            # soru açıkça sıralama istiyorsa true
 #
 # Cevaplanamaz soru: referans_sql: null  (beklenen davranış: model SQL üretmez)
+#
+# Sorular 2026-11-22'de Claude (sohbet) tarafından yazıldı; referanslar shop.db üzerinde doğrulandı.
+# Alternatif yorumlar (kabul_edilen) model cevapları görülmeden, soru yazılırken belirlendi.
+# varsayim_beklenir: makul bir kullanıcı başka bir yorum bekleyebilir VE o yorum bu veride farklı sayı verir.
 
-[]
+- id: 201
+  soru: satış kalemlerinin yüzde kaçı liste fiyatının altında satılmış
+  referans_sql: >-
+    SELECT 100.0 * SUM(oi.unit_price < p.price) / COUNT(*)
+    FROM order_items oi JOIN products p ON p.id = oi.product_id
+  yorum: >-
+    Tüm siparişlerin kalemleri (41,44). Yalnızca tamamlanan siparişler de makul (42,13).
+  kabul_edilen:
+    - >-
+      SELECT 100.0 * SUM(oi.unit_price < p.price) / COUNT(*)
+      FROM order_items oi JOIN products p ON p.id = oi.product_id JOIN orders o ON o.id = oi.order_id
+      WHERE o.status = 'tamamlandi'
+  zorluk: orta
+  kategori: indirim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 202
+  soru: indirim yaptığımız için toplamda ne kadar gelirden olduk?
+  referans_sql: >-
+    SELECT SUM(oi.quantity * (p.price - oi.unit_price))
+    FROM order_items oi JOIN products p ON p.id = oi.product_id JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'tamamlandi'
+  yorum: >-
+    Liste fiyatı ile satış fiyatı farkı x adet, yalnızca tamamlanan siparişler (iptal/iade gelir değildir).
+  zorluk: zor
+  kategori: indirim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 203
+  soru: bizden sadece 1 kere sipariş vermiş kaç müşteri var
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id HAVING COUNT(*) = 1)
+  yorum: >-
+    Tüm durumlar (2). Yalnızca tamamlanan siparişler sayılırsa 4.
+  kabul_edilen:
+    - >-
+      SELECT COUNT(*) FROM (SELECT customer_id FROM orders WHERE status = 'tamamlandi'
+      GROUP BY customer_id HAVING COUNT(*) = 1)
+  zorluk: orta
+  kategori: iki-adim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 204
+  soru: 2025te üye olanlar mı daha çok harcıyor 2026da üye olanlar mı? kişi başı ortalama harcamayı göster
+  referans_sql: >-
+    SELECT strftime('%Y', c.signup_date) AS yil, SUM(oi.quantity * oi.unit_price) / COUNT(DISTINCT c.id)
+    FROM customers c JOIN orders o ON o.customer_id = c.id JOIN order_items oi ON oi.order_id = o.id
+    WHERE o.status = 'tamamlandi' GROUP BY yil
+  yorum: >-
+    Kayıt yılına göre müşteri başına tamamlanan sipariş tutarı. Her müşterinin harcaması var, paydada belirsizlik yok.
+  zorluk: zor
+  kategori: iki-adim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 205
+  soru: aynı siparişte en sık birlikte alınan iki ürün hangileri
+  referans_sql: >-
+    SELECT p1.name, p2.name
+    FROM order_items a JOIN order_items b ON a.order_id = b.order_id AND a.product_id < b.product_id
+    JOIN products p1 ON p1.id = a.product_id JOIN products p2 ON p2.id = b.product_id
+    GROUP BY a.product_id, b.product_id ORDER BY COUNT(*) DESC LIMIT 1
+  yorum: >-
+    Tüm siparişler: Koşu Ayakkabısı + Veri Bilimi Kitabı (33 sipariş). Yalnızca tamamlananlarda
+    Kablosuz Kulaklık + Masa Lambası (30). İki ad ayrı sütunlarda beklenir.
+  kabul_edilen:
+    - >-
+      SELECT p1.name, p2.name
+      FROM order_items a JOIN order_items b ON a.order_id = b.order_id AND a.product_id < b.product_id
+      JOIN orders o ON o.id = a.order_id
+      JOIN products p1 ON p1.id = a.product_id JOIN products p2 ON p2.id = b.product_id
+      WHERE o.status = 'tamamlandi'
+      GROUP BY a.product_id, b.product_id ORDER BY COUNT(*) DESC LIMIT 1
+  ilk_satir: true
+  zorluk: zor
+  kategori: kendine-join
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 206
+  soru: içinde 3 farklı ürün olan kaç sipariş var?
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT order_id FROM order_items GROUP BY order_id
+    HAVING COUNT(DISTINCT product_id) = 3)
+  zorluk: kolay
+  kategori: gruplama
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 207
+  soru: 90 günden uzun süredir sipariş vermeyen kaç müşterimiz var
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id
+    HAVING MAX(order_date) < date('2026-11-20', '-90 day'))
+  yorum: >-
+    Son sipariş (durumu ne olursa olsun) 90 günden eski: 17. Yalnızca tamamlanan siparişlere bakılırsa 24.
+  kabul_edilen:
+    - >-
+      SELECT COUNT(*) FROM (SELECT customer_id FROM orders WHERE status = 'tamamlandi'
+      GROUP BY customer_id HAVING MAX(order_date) < date('2026-11-20', '-90 day'))
+  zorluk: orta
+  kategori: tarih
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 208
+  soru: kayıt olduğu gün ilk siparişini veren kaç kişi var
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT c.id FROM customers c JOIN orders o ON o.customer_id = c.id
+    GROUP BY c.id HAVING MIN(o.order_date) = c.signup_date)
+  zorluk: orta
+  kategori: tarih
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 209
+  soru: şimdiye kadarki en yüksek tutarlı sipariş kimindi, ne kadardı
+  referans_sql: >-
+    SELECT c.name, SUM(oi.quantity * oi.unit_price) AS tutar
+    FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN customers c ON c.id = o.customer_id
+    GROUP BY o.id ORDER BY tutar DESC LIMIT 1
+  yorum: >-
+    Deniz Çelik, 27.711,60. Sipariş tamamlanmış; durum filtresi sonucu değiştirmez.
+  ilk_satir: true
+  zorluk: orta
+  kategori: join
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 210
+  soru: kitapların toplam cirodaki payı yüzde kaç
+  referans_sql: >-
+    SELECT 100.0 * SUM(CASE WHEN p.category = 'Kitap' THEN oi.quantity * oi.unit_price ELSE 0 END)
+           / SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'tamamlandi'
+  zorluk: orta
+  kategori: oran
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 211
+  soru: müşteriler ilk siparişten sonra ikinci siparişi ortalama kaç gün sonra veriyor
+  referans_sql: >-
+    WITH s AS (SELECT customer_id, order_date,
+                      ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date, id) AS rn FROM orders)
+    SELECT AVG(julianday(b.order_date) - julianday(a.order_date))
+    FROM s a JOIN s b ON a.customer_id = b.customer_id AND a.rn = 1 AND b.rn = 2
+  yorum: >-
+    Tüm durumlar, en az 2 siparişi olan müşteriler (45,87 gün). Yalnızca tamamlananlarla 44,87.
+  kabul_edilen:
+    - >-
+      WITH s AS (SELECT customer_id, order_date,
+                        ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date, id) AS rn
+                 FROM orders WHERE status = 'tamamlandi')
+      SELECT AVG(julianday(b.order_date) - julianday(a.order_date))
+      FROM s a JOIN s b ON a.customer_id = b.customer_id AND a.rn = 1 AND b.rn = 2
+  zorluk: zor
+  kategori: pencere
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 212
+  soru: 2026da hangi aylarda ciro bir önceki aya göre düştü
+  referans_sql: >-
+    WITH m AS (SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price) AS ciro
+               FROM orders o JOIN order_items oi ON oi.order_id = o.id
+               WHERE o.status = 'tamamlandi' GROUP BY ay),
+         l AS (SELECT ay, ciro, LAG(ciro) OVER (ORDER BY ay) AS onceki FROM m)
+    SELECT ay FROM l WHERE ay >= '2026-01' AND ciro < onceki
+  yorum: >-
+    Nisan, Mayıs, Ağustos, Kasım. Kasım henüz bitmedi (bugün 20 Kasım); yarım ayı dışarıda bırakmak da
+    makul. Ocak, Aralık 2025 ile karşılaştırılır (düşüş yok).
+  kabul_edilen:
+    - >-
+      WITH m AS (SELECT strftime('%Y-%m', o.order_date) AS ay, SUM(oi.quantity * oi.unit_price) AS ciro
+                 FROM orders o JOIN order_items oi ON oi.order_id = o.id
+                 WHERE o.status = 'tamamlandi' GROUP BY ay),
+           l AS (SELECT ay, ciro, LAG(ciro) OVER (ORDER BY ay) AS onceki FROM m)
+      SELECT ay FROM l WHERE ay >= '2026-01' AND ay < '2026-11' AND ciro < onceki
+  zorluk: zor
+  kategori: pencere
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 213
+  soru: harcamasının yarısından fazlasını tek bir kategoriye yapan kaç müşteri var
+  referans_sql: >-
+    WITH k AS (SELECT o.customer_id AS cid, p.category, SUM(oi.quantity * oi.unit_price) AS t
+               FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
+               WHERE o.status = 'tamamlandi' GROUP BY o.customer_id, p.category),
+         tt AS (SELECT cid, SUM(t) AS toplam, MAX(t) AS en_buyuk FROM k GROUP BY cid)
+    SELECT COUNT(*) FROM tt WHERE en_buyuk > toplam / 2.0
+  yorum: >-
+    Tamamlanan siparişler. Tam yarıda kalan müşteri yok, sınır belirsizliği sonucu etkilemez.
+  zorluk: zor
+  kategori: iki-adim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 214
+  soru: en cok iade edilen urun hangisi
+  referans_sql: >-
+    SELECT p.name FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'iade' GROUP BY p.id ORDER BY SUM(oi.quantity) DESC LIMIT 1
+  yorum: >-
+    Adet olarak Yoga Matı (31). İade edilen sipariş sayısına göre Sırt Çantası (14).
+  kabul_edilen:
+    - >-
+      SELECT p.name FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+      WHERE o.status = 'iade' GROUP BY p.id ORDER BY COUNT(DISTINCT o.id) DESC LIMIT 1
+  ilk_satir: true
+  zorluk: orta
+  kategori: belirsiz
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 215
+  soru: siparişler ortalama kaç günde teslim ediliyor
+  referans_sql: null
+  yorum: >-
+    Teslim tarihi yok; yalnızca sipariş tarihi var.
+  zorluk: kolay
+  kategori: cevaplanamaz
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 216
+  soru: kâr marjı en yüksek ürün hangisi
+  referans_sql: null
+  yorum: >-
+    Maliyet bilgisi yok. Tuzak: liste fiyatı ile satış fiyatı farkı kâr değil, indirimdir.
+  zorluk: zor
+  kategori: cevaplanamaz
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 217
+  soru: müşterilerimizin yüzde kaçı kadın
+  referans_sql: null
+  yorum: >-
+    Cinsiyet sütunu yok. Tuzak: model adlardan cinsiyet tahmin etmeye çalışabilir.
+  zorluk: orta
+  kategori: cevaplanamaz
+  sirali: false
+  varsayim_beklenir: false
+
+- id: 218
+  soru: şehir şehir müşteri başına ortalama kaç sipariş düşüyor
+  referans_sql: >-
+    SELECT c.city, 1.0 * COUNT(o.id) / COUNT(DISTINCT c.id)
+    FROM customers c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.city
+  yorum: >-
+    Tüm durumlar. Yalnızca tamamlanan siparişler de makul.
+  kabul_edilen:
+    - >-
+      SELECT c.city, 1.0 * COUNT(o.id) / COUNT(DISTINCT c.id)
+      FROM customers c LEFT JOIN orders o ON o.customer_id = c.id AND o.status = 'tamamlandi' GROUP BY c.city
+  zorluk: orta
+  kategori: oran
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 219
+  soru: hiç spor ürünü almamış kaç müşteri var
+  referans_sql: >-
+    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
+    (SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
+     WHERE o.customer_id = c.id AND p.category = 'Spor')
+  yorum: >-
+    Herhangi bir durumda sipariş: 9. Yalnızca tamamlanan siparişler sayılırsa 13.
+  kabul_edilen:
+    - >-
+      SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
+      (SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
+       WHERE o.customer_id = c.id AND p.category = 'Spor' AND o.status = 'tamamlandi')
+  zorluk: orta
+  kategori: iki-adim
+  sirali: false
+  varsayim_beklenir: true
+
+- id: 220
+  soru: kahve makinasi toplam kac adet satildi
+  referans_sql: >-
+    SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    JOIN products p ON p.id = oi.product_id WHERE p.name = 'Kahve Makinesi' AND o.status = 'tamamlandi'
+  yorum: >-
+    Yazım hatalı ürün adı ("makinası"). Tamamlanan siparişler 387; tüm durumlar 441.
+  kabul_edilen:
+    - >-
+      SELECT SUM(oi.quantity) FROM order_items oi JOIN products p ON p.id = oi.product_id
+      WHERE p.name = 'Kahve Makinesi'
+  zorluk: kolay
+  kategori: yazim-hatasi
+  sirali: false
+  varsayim_beklenir: true
