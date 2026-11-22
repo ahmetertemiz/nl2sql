@@ -5,6 +5,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "shop.db"
+# Örnek verinin bittiği gün. Arayüz ve değerlendirme "bugün" olarak bunu kullanır:
+# gerçek tarih kullanılsaydı veri eskidikçe "geçen ay" gibi sorular boş dönerdi.
+TODAY = date(2026, 11, 20)
 
 SCHEMA = """
 CREATE TABLE customers (
@@ -54,7 +57,7 @@ def build(path: Path = DB_PATH, seed: int = 42) -> Path:
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
 
-    today = date(2026, 11, 20)
+    today = TODAY
     start = today - timedelta(days=540)
 
     customers = [

@@ -195,3 +195,68 @@ def test_example_button_calls_model(calls):
     example.click().run()
     assert [c["question"] for c in calls] == ["Aylara göre toplam ciro nasıl değişti?"]
     assert at.text_input(key="question").value == "Aylara göre toplam ciro nasıl değişti?"
+
+
+# --- Yayın hazırlığı: sabit demo tarihi, günlük sınır, ziyaretçinin kendi anahtarı ---
+
+@pytest.fixture
+def key_calls(monkeypatch):
+    """calls gibi, ama today ve api_key de kaydedilir; günlük sayaç her testte sıfırdan başlar."""
+    import quota
+
+    log = []
+
+    def fake_answer(question, db_path, today, allowed=None, value_columns=None, api_key=None, **_):
+        log.append({"today": today, "api_key": api_key})
+        return {"sql": "SELECT 1 AS n", "explanation": "sahte", "chart": "none", "x": None, "y": None,
+                "df": pd.DataFrame({"n": [1]}), "error": None}
+
+    monkeypatch.setattr(nl2sql, "answer", fake_answer)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    monkeypatch.delenv("NL2SQL_DAILY_LIMIT", raising=False)
+    quota.reset()
+    yield log
+    quota.reset()
+
+
+def test_today_is_fixed_to_seed_date_not_real_date(key_calls):
+    asked(open_app())
+    assert key_calls == [{"today": "2026-11-20", "api_key": None}]
+
+
+def test_daily_limit_blocks_shared_key(key_calls, monkeypatch):
+    monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "1")
+    at = asked(open_app())
+    assert len(key_calls) == 1
+    submit_button(at).click().run()                          # ikinci çağrı: hak doldu
+    assert len(key_calls) == 1
+    assert any("demo hakkı doldu" in w.value for w in at.warning)
+
+
+def test_own_key_is_passed_and_bypasses_limit(key_calls, monkeypatch):
+    monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "1")
+    at = asked(open_app())
+    at.text_input(key="user_key").input("sk-ant-ziyaretci").run()
+    submit_button(at).click().run()
+    assert [c["api_key"] for c in key_calls] == [None, "sk-ant-ziyaretci"]
+    assert not any("demo hakkı doldu" in w.value for w in at.warning)
+
+
+def test_no_server_key_asks_for_own_key_then_works(key_calls, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    at = open_app()
+    assert any("API anahtarı yok" in e.value for e in at.error)
+    at.text_input(key="user_key").input("sk-ant-ziyaretci").run()
+    assert not at.error
+    asked(at)
+    assert key_calls[-1]["api_key"] == "sk-ant-ziyaretci"
+
+
+def test_daily_limit_also_covers_interpret(key_calls, comments, monkeypatch):
+    monkeypatch.setenv("NL2SQL_DAILY_LIMIT", "1")
+    at = open_app()
+    at.toggle(key="interpret_on").set_value(True).run()
+    at = asked(at)                                           # tek hak soruya gitti
+    next(b for b in at.button if b.label == "Yorumla").click().run()
+    assert comments == []
+    assert any("demo hakkı doldu" in w.value for w in at.warning)

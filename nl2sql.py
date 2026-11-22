@@ -134,12 +134,16 @@ def build_interpret_message(question: str, sql: str, df: pd.DataFrame,
 
 
 def interpret_result(question: str, sql: str, df: pd.DataFrame,
-                     max_rows: int = INTERPRET_MAX_ROWS, client=None) -> str:
-    """Sonucu düz dille yorumlayan ikinci model çağrısı. client: testlerde sahte istemci takmak için."""
+                     max_rows: int = INTERPRET_MAX_ROWS, client=None,
+                     api_key: str | None = None) -> str:
+    """Sonucu düz dille yorumlayan ikinci model çağrısı. client: testlerde sahte istemci takmak için.
+
+    api_key: ziyaretçinin kendi anahtarı; None ise ANTHROPIC_API_KEY ortam değişkeni kullanılır.
+    """
     if client is None:
         import anthropic  # geç import: testler API anahtarı olmadan çalışabilsin
 
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=MODEL,
         max_tokens=16000,  # düşünme (thinking) de bu sınırdan yer
@@ -485,11 +489,12 @@ def response_text(content) -> str:
     return "".join(block.text for block in content if block.type == "text")
 
 
-def generate_sql(question: str, schema: str, today: str, error_feedback: str | None = None) -> dict:
+def generate_sql(question: str, schema: str, today: str, error_feedback: str | None = None,
+                 api_key: str | None = None) -> dict:
     """Soruyu Claude'a gönderir. error_feedback doluysa önceki hatayı düzelttirir."""
     import anthropic  # geç import: testler API anahtarı olmadan çalışabilsin
 
-    client = anthropic.Anthropic()  # ANTHROPIC_API_KEY ortam değişkenini okur
+    client = anthropic.Anthropic(api_key=api_key)  # None ise ANTHROPIC_API_KEY ortam değişkenini okur
     messages = [{"role": "user", "content": question}]
     if error_feedback:
         messages[0]["content"] += (
@@ -505,7 +510,8 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
 
 
 def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
-           allowed: Allowed | None = None, value_columns: Allowed | None = None) -> dict:
+           allowed: Allowed | None = None, value_columns: Allowed | None = None,
+           api_key: str | None = None) -> dict:
     """Uçtan uca: soru -> SQL -> sonuç. SQL hata verirse modele hatayı gösterip bir kez daha dener.
 
     İzinsiz erişim (UnsafeSQL) ve süre aşımı (QueryTimeout) yeniden denenmez; kullanıcıya gösterilir.
@@ -513,7 +519,7 @@ def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
     schema = get_schema(db_path, allowed, value_columns)
     feedback = None
     for attempt in range(max_retries + 1):
-        result = generate_sql(question, schema, today, feedback)
+        result = generate_sql(question, schema, today, feedback, api_key=api_key)
         if not result["sql"]:
             return {**result, "df": None, "error": None}
         try:

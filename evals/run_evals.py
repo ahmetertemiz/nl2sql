@@ -33,9 +33,9 @@ SETS = {"questions": QUESTIONS, "holdout": ROOT / "evals" / "holdout.yaml",
         "holdout_v2": ROOT / "evals" / "holdout_v2.yaml"}
 RESULTS_DIR = ROOT / "evals" / "results"
 LEVELS = ("kolay", "orta", "zor")
-# seed_db.build içindeki sabit "bugün". Sabit tutuyoruz ki "geçen ay", "son 3 ay"
+# Örnek verinin bittiği gün (seed_db.TODAY). Sabit tutuyoruz ki "geçen ay", "son 3 ay"
 # gibi göreli sorular her gün aynı cevabı versin.
-TODAY = "2026-11-20"
+TODAY = seed_db.TODAY.isoformat()
 
 
 def load_questions(path: Path = QUESTIONS) -> list[dict]:

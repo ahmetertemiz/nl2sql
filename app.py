@@ -1,16 +1,22 @@
 """Doğal dille SQL — Streamlit arayüzü. Çalıştır: streamlit run app.py"""
 import json
 import os
-from datetime import date
 from pathlib import Path
 
 import streamlit as st
 
+import quota
 import seed_db
 from charts import make_chart
 from nl2sql import INTERPRET_MAX_ROWS, answer, format_sql, get_schema, interpret_result, list_columns
 
 DB_PATH = Path(__file__).parent / "shop.db"
+TODAY = seed_db.TODAY.isoformat()  # örnek verinin bittiği gün; gerçek tarih değil (bkz. seed_db.py)
+# Ortak anahtarla günde en fazla kaç model çağrısı yapılabilir. 0 = sınırsız (yerel kullanım).
+DAILY_LIMIT = int(os.getenv("NL2SQL_DAILY_LIMIT", "0"))
+MAX_QUESTION_CHARS = 500
+LIMIT_MESSAGE = ("Bugünkü ücretsiz demo hakkı doldu. Soldaki panelden kendi Anthropic API "
+                 "anahtarını girerek devam edebilir ya da yarın tekrar deneyebilirsin.")
 EXAMPLES = [
     "Geçen ay en çok satan 5 ürün hangileri?",
     "Aylara göre toplam ciro nasıl değişti?",
@@ -85,12 +91,30 @@ with st.sidebar:
         st.code(get_schema(DB_PATH, allowed, value_columns) or "-- Henüz bir sütun seçilmedi",
                 language="sql")
 
+    # Ziyaretçinin kendi anahtarı: günlük sınıra takılmaz, yalnızca bu oturumda tutulur.
+    with st.expander("Kendi API anahtarın", icon=":material/key:"):
+        user_key = st.text_input(
+            "Anthropic API anahtarı", type="password", key="user_key",
+            help=("İsteğe bağlı. Girersen çağrılar senin anahtarınla yapılır ve günlük demo "
+                  "sınırı uygulanmaz. Anahtar kaydedilmez; sayfayı kapatınca silinir."),
+        ).strip() or None
+
 st.title("Doğal Dille SQL")
 st.caption("Sorunu Türkçe yaz; araç SQL'e çevirsin, çalıştırsın ve sonucu göstersin.")
 
-if not os.getenv("ANTHROPIC_API_KEY"):
-    st.error("ANTHROPIC_API_KEY ortam değişkeni tanımlı değil. README'deki kurulum adımına bak.")
+st.caption(f"Örnek veri {TODAY} tarihinde bitiyor; \"bugün\", \"geçen ay\" gibi ifadeler "
+           "bu tarihe göre hesaplanır.")
+
+if not user_key and not os.getenv("ANTHROPIC_API_KEY"):
+    st.error("API anahtarı yok. Soldaki panelden kendi anahtarını gir ya da ANTHROPIC_API_KEY "
+             "ortam değişkenini tanımla (README'deki kurulum adımına bak).")
     st.stop()
+
+
+def may_call_model() -> bool:
+    """Kendi anahtarını giren sınırsız; ortak anahtar günlük sınıra tabi."""
+    return bool(user_key) or quota.take(DAILY_LIMIT)
+
 
 if not allowed:
     st.info("Başlamak için soldaki panelden modelin görebileceği sütunları seç.",
@@ -114,17 +138,21 @@ for col, example in zip(cols, EXAMPLES):
 # Model yalnızca Gönder'e (veya bir örnek soruya) basılınca çağrılır; her çağrı ücretli.
 with st.form("ask_form", border=False):
     with st.container(horizontal=True, vertical_alignment="bottom"):
-        st.text_input("Sorun", key="question", placeholder=EXAMPLES[0])
+        st.text_input("Sorun", key="question", placeholder=EXAMPLES[0],
+                      max_chars=MAX_QUESTION_CHARS)
         submitted = st.form_submit_button("Gönder", icon=":material/send:", type="primary")
 
 # Sonucun hangi ayarlarla üretildiğini hatırla: ayar değişince eski sonuç uyarıyla gösterilir.
 settings = json.dumps([allowed, value_columns], sort_keys=True)
 question = st.session_state.question.strip()
 if (submitted or st.session_state.pop("run_now", False)) and question:
+    if not may_call_model():
+        st.warning(LIMIT_MESSAGE, icon=":material/hourglass_disabled:")
+        st.stop()
     with st.spinner("Sorgu hazırlanıyor..."):
         try:
-            result = answer(question, DB_PATH, today=date.today().isoformat(),
-                            allowed=allowed, value_columns=value_columns)
+            result = answer(question, DB_PATH, today=TODAY, allowed=allowed,
+                            value_columns=value_columns, api_key=user_key)
         except Exception as exc:
             st.error(f"Model çağrısı başarısız oldu: {exc}")
             st.stop()
@@ -173,10 +201,13 @@ if last:
                     "Yorumla", icon=":material/chat:",
                     disabled="comment" in last,  # aynı sonuç için ikinci kez ücret ödeme
                 )
-            if want_comment:
+            if want_comment and not may_call_model():
+                st.warning(LIMIT_MESSAGE, icon=":material/hourglass_disabled:")
+            elif want_comment:
                 with st.spinner("Sonuç yorumlanıyor..."):
                     try:
-                        last["comment"] = interpret_result(last["question"], result["sql"], df)
+                        last["comment"] = interpret_result(last["question"], result["sql"], df,
+                                                           api_key=user_key)
                     except Exception as exc:  # hata görünür kalsın; düğme tekrar denenebilir
                         st.error(f"Yorum alınamadı: {exc}")
                 if "comment" in last:

@@ -2,6 +2,29 @@
 
 Türkçe yazılan soruyu SQL'e çevirir, örnek bir e-ticaret veritabanında çalıştırır ve sonucu tablo + grafik olarak gösterir.
 
+*English: a text-to-SQL tool for Turkish questions. It generates SQLite queries with Claude, runs them read-only behind a column-level allowlist, and reports execution accuracy on a 20-question dev set and a separate holdout set. Docs are in Turkish.*
+
+## Sonuçlar
+
+Model `claude-sonnet-5-5`, her soru 3 kez soruldu. Ölçüt çalıştırma doğruluğu: üretilen SQL'in referansla aynı sonucu döndürmesi.
+
+| Ölçüm | Sonuç |
+|---|---|
+| Geliştirme seti (20 soru × 3) | 60/60 doğru |
+| Ayrı test seti v1 (20 soru × 3) | 53/60 doğru (%88,3) |
+| Net sorularda gereksiz varsayım yazmama | 38/39 deneme (%97,4) |
+| Belirsiz sorularda kararını açıkça yazma | 21/21 deneme |
+
+- Ayrı test setindeki 7 başarısız denemenin hiçbiri hatalı SQL değil: 4'ü tek satır yerine doğru sıralanmış tam liste döndürmek, 3'ü iki makul yorumu olan tek bir soru.
+- Ayrı test seti 2. ölçümde koşuldu. Sonraki üç prompt değişikliği yalnızca geliştirme setinde ölçüldü; görülmemiş sorulardaki etkileri henüz bilinmiyor (`evals/holdout_v2.yaml` bunun için bekliyor).
+- Beş ölçümün tamamı, geri adımlar dahil: [evals/RAPOR.md](evals/RAPOR.md).
+
+## Öne çıkanlar
+
+- **Sütun düzeyinde izin listesi.** Model yalnızca kullanıcının seçtiği sütunların şemasını görür. Üretilen SQL dört katmanda denetlenir (ayrıntı: [Nasıl çalışır](#nasıl-çalışır)).
+- **Varsayımlar ekranda.** Soru belirsizse model verdiği kararı ("yalnızca tamamlanan siparişler sayıldı" gibi) sonucun üstünde yazar.
+- **Ölçülen prompt değişiklikleri.** Her değişiklik önce/sonra sayılarıyla raporlanır; ayrı test setine bakılarak prompt ayarlanmaz.
+
 ## Kurulum
 
 ```bash
@@ -15,6 +38,18 @@ streamlit run app.py
 
 Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model denemek için `NL2SQL_MODEL` ortam değişkenini ayarla.
 
+## Herkese açık yayınlama
+
+Linki bulan herkes sunucudaki anahtarla soru sorabilir. Bunun için üç önlem var:
+
+1. **Harcama sınırı (asıl güvence).** Anthropic Console'da anahtarın bağlı olduğu çalışma alanına aylık harcama sınırı koy. Aşağıdaki iki önlem bunun yerini tutmaz.
+2. **Günlük çağrı sınırı.** `NL2SQL_DAILY_LIMIT` ortam değişkeni, ortak anahtarla günde yapılabilecek toplam model çağrısını (soru + yorum) sınırlar; ör. `100`. Tanımlı değilse ya da `0` ise sınır yoktur. Sayaç bellekte tutulur ve bütün ziyaretçiler için ortaktır; uygulama yeniden başlayınca sıfırlanır.
+3. **Ziyaretçinin kendi anahtarı.** Kenar çubuğundaki "Kendi API anahtarın" alanına anahtar giren ziyaretçinin çağrıları o anahtarla yapılır ve günlük sınıra takılmaz. Anahtar yalnızca o tarayıcı oturumunda tutulur, kaydedilmez.
+
+Soru metni en fazla 500 karakterdir.
+
+Streamlit Community Cloud'da `ANTHROPIC_API_KEY` ve `NL2SQL_DAILY_LIMIT` değerlerini uygulamanın "Secrets" bölümüne en üst düzey anahtarlar olarak yaz; Streamlit bunları ortam değişkeni olarak da sunar. Anahtarı depoya ekleme.
+
 ## Dosyalar
 
 | Dosya | Görevi |
@@ -24,6 +59,8 @@ Veritabanı (`shop.db`) ilk çalıştırmada otomatik oluşur. Farklı bir model
 | `app.py` | Streamlit arayüzü |
 | `charts.py` | Altair grafikleri: çubuklar SQL'deki satır sırasıyla, tarih ekseni kronolojik |
 | `test_charts.py` | Grafik sıralama testleri |
+| `quota.py` | Ortak anahtar için günlük çağrı sayacı |
+| `test_quota.py` | Sayaç testleri |
 | `test_nl2sql.py` | API anahtarı gerektirmeyen testler (`python -m pytest -q`) |
 | `test_app.py` | Arayüz testleri: model yalnızca Gönder'e basılınca çağrılıyor mu, grafik ve SQL gösterimi (sahte model, API anahtarı gerektirmez) |
 | `evals/questions.yaml` | 20 soruluk değerlendirme seti: soru, referans SQL, zorluk (kolay/orta/zor), kategori |
@@ -56,7 +93,7 @@ python evals/run_evals.py --set holdout --runs 3   # ayrı test seti, her soru 3
 - Satır sırası yalnızca `sirali: true` olan sorularda (soru sıralama istiyorsa) önemlidir.
 - Belirsiz sorular için iki isteğe bağlı alan var: `kabul_edilen` (başka makul yorumların referans SQL'leri; herhangi biriyle eşleşen geçer) ve `ilk_satir: true` (tek satır beklenen soruda, sıralı listenin ilk satırı doğruysa geçer).
 - Ondalıklı sayılarda %0.5 göreli tolerans vardır: `ROUND(..., 1)` ile yuvarlanmış doğru bir cevap yanlış sayılmaz. İki değer de tam sayıysa (sayım gibi) birebir eşit olmalıdır.
-- "Bugün" 2026-11-20'ye sabitlenmiştir (`seed_db.py` ile aynı); "geçen ay", "son 3 ay" gibi sorular her gün aynı cevabı verir.
+- "Bugün" örnek verinin bittiği güne, 2026-11-20'ye sabitlenmiştir (`seed_db.TODAY`); "geçen ay", "son 3 ay" gibi sorular her gün aynı cevabı verir. Arayüz de aynı sabiti kullanır: gerçek tarih kullanılsaydı veri eskidikçe bu sorular boş dönerdi.
 
 Çıktıda toplam doğruluk, zorluk seviyesine göre doğruluk ve başarısız her soru için üretilen SQL ile referans SQL yan yana gösterilir. Sonuçlar `evals/results/` altına tarihli bir JSON dosyası olarak kaydedilir.
 
@@ -88,4 +125,6 @@ Setteki sorular kategorilere ayrılır: filtreleme, gruplama, çoklu JOIN, tarih
 - [x] Sonucu düz dille yorumlayan ikinci bir model çağrısı (isteğe bağlı, varsayılan kapalı)
 - [ ] Sohbet geçmişi ("peki ya sadece İstanbul?" gibi takip soruları)
 - [ ] Kendi CSV / veritabanını yükleme
+- [x] Yayın hazırlığı: sabit demo tarihi, günlük çağrı sınırı, ziyaretçinin kendi anahtarı
+- [ ] Ayrı test seti v2: görülmemiş sorularla yeniden ölçüm
 - [ ] Streamlit Community Cloud'a yayınlama
