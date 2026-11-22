@@ -14,6 +14,8 @@ TEXTS: dict[str, dict[str, object]] = {
         "sidebar_header": "Data the model can see",
         "sidebar_caption": ("Only the tables and columns you select are shown to the model and can be "
                             "queried. While result interpretation is off, no data rows are sent to the model."),
+        "choose_options": "Choose columns",
+        "no_options": "Select columns above first",
         "select_all": "Select all",
         "clear_all": "Clear all",
         "value_cols_label": "Columns whose values are shown to the model",
@@ -83,6 +85,8 @@ TEXTS: dict[str, dict[str, object]] = {
         "sidebar_header": "Modelin görebileceği veriler",
         "sidebar_caption": ("Yalnızca seçtiğin tablo ve sütunlar modele gösterilir ve sorgulanabilir. "
                             "Sonuç yorumlama kapalıyken veri satırları modele gönderilmez."),
+        "choose_options": "Sütun seç",
+        "no_options": "Önce yukarıdan sütun seç",
         "select_all": "Tümünü aç",
         "clear_all": "Tümünü kapat",
         "value_cols_label": "Değerleri modele gösterilecek sütunlar",

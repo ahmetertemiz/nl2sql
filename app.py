@@ -44,7 +44,8 @@ with st.sidebar:
         st.button(t(lang, "select_all"), on_click=set_all, args=(True,), width="stretch")
         st.button(t(lang, "clear_all"), on_click=set_all, args=(False,), width="stretch")
     # Varsayılan: hiçbir şey açık değil. Kullanıcı bilerek seçmeli.
-    allowed = {table: st.multiselect(table, cols, key=f"cols_{table}") for table, cols in COLUMNS.items()}
+    allowed = {table: st.multiselect(table, cols, key=f"cols_{table}", placeholder=t(lang, "choose_options"))
+               for table, cols in COLUMNS.items()}
     allowed = {table: cols for table, cols in allowed.items() if cols}
 
     # Değerleri gösterilecek sütunlar yalnızca izinli sütunlar arasından seçilebilir.
@@ -52,8 +53,10 @@ with st.sidebar:
     value_options = [f"{table}.{col}" for table, cols in allowed.items() for col in cols]
     if "value_cols" in st.session_state:
         st.session_state.value_cols = [v for v in st.session_state.value_cols if v in value_options]
+    # placeholder verilince Streamlit'in "No options to select" metni de onun yerine geçer
     picked = st.multiselect(t(lang, "value_cols_label"), value_options, key="value_cols",
-                            help=t(lang, "value_cols_help"))
+                            help=t(lang, "value_cols_help"),
+                            placeholder=t(lang, "choose_options" if value_options else "no_options"))
     value_columns: dict[str, list[str]] = {}
     for item in picked:
         table, col = item.split(".", 1)

@@ -315,3 +315,15 @@ def test_each_language_opens_its_own_database(monkeypatch):
     at.text_input(key="question").input("How many customers?")
     next(b for b in at.button if b.label == "Send").click().run()
     assert seen == ["shop.db", "shop_en.db"]
+
+
+def test_multiselect_placeholders_are_translated(calls):
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.session_state["lang"] = "tr"
+    at.run()
+    assert at.multiselect(key="cols_customers").proto.placeholder == "Sütun seç"
+    assert at.multiselect(key="value_cols").proto.placeholder == "Önce yukarıdan sütun seç"
+    at.multiselect(key="cols_customers").set_value(["city"]).run()
+    assert at.multiselect(key="value_cols").proto.placeholder == "Sütun seç"
+    at.selectbox(key="lang").set_value("en").run()
+    assert at.multiselect(key="cols_orders").proto.placeholder == "Choose columns"
