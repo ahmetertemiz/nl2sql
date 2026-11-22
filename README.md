@@ -96,6 +96,10 @@ Column names, column order and extra columns are ignored; row order matters only
 | `evals/` | Question sets (`questions`, `questions_en`, `holdout`, `holdout_v2`), runner and report |
 | `test_*.py` | Tests; none of them need an API key (`python -m pytest -q`) |
 
+## License
+
+[MIT](LICENSE) © 2026 Muhammed Ahmet Ertemiz
+
 ---
 
 ## Türkçe
@@ -107,3 +111,5 @@ Doğal dille (Türkçe ya da İngilizce) sorulan soruyu Claude ile SQLite sorgus
 - Değerlendirme raporu, tüm ölçümler ve geri alınan adımlarla birlikte Türkçe: [evals/RAPOR.md](evals/RAPOR.md). Holdout sorusu yazım kılavuzu: [evals/HOLDOUT_KILAVUZU.md](evals/HOLDOUT_KILAVUZU.md).
 
 Kurulum yukarıdaki "Setup" bölümündeki komutlarla yapılır.
+
+Lisans: [MIT](LICENSE).
