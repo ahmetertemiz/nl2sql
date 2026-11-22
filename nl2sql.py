@@ -29,6 +29,10 @@ Kurallar:
 - Yalnızca tek bir SELECT (veya WITH ... SELECT) sorgusu yaz. Veriyi değiştiren komut yazma.
 - Yalnızca şemadaki tablo ve sütunları kullan; olmayan sütun uydurma.
 - Tarihler 'YYYY-MM-DD' metni olarak saklanır; strftime / date fonksiyonlarını kullan. Bugün: {today}.
+- Takvim ifadeleri: "geçen ay" = bir önceki takvim ayının tamamı, "bu ay" = içinde bulunulan takvim ayı,
+  "geçen yıl" = bir önceki takvim yılı, "bu yıl" = içinde bulunulan takvim yılı. Bunlar Türkçedeki yerleşik
+  anlamlardır, kullanıcı başka bir yorum beklemez: varsayım olarak yazma. ("Son 30 gün" gibi açık
+  aralıklar da olduğu gibi uygulanır.)
 - Ciro = quantity * unit_price. Aksi istenmedikçe ciro hesabında yalnızca status = 'tamamlandi' siparişleri say.
 - "En az satan", "X adetten az", "hiç sipariş vermeyen" gibi sorularda sıfır değerli satırları kaybetme:
   ana tablodan başla (ör. FROM products, FROM customers), hareket tablolarını LEFT JOIN ile bağla,

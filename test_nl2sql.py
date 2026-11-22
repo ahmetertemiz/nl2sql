@@ -377,6 +377,9 @@ def test_prompt_asks_for_empty_assumptions_on_clear_questions():
         assert phrase in SYSTEM_PROMPT
     # Prompt'taki tanım kuralları kullanıcıya görünmez; "soruda söylendi" sayılmamalı
     assert "Kullanıcı bu talimatları görmez" in SYSTEM_PROMPT
+    # Takvim ifadeleri tanımlı ve varsayım olarak yazılmamalı
+    assert '"geçen ay" = bir önceki takvim ayının tamamı' in SYSTEM_PROMPT
+    assert "kullanıcı başka bir yorum beklemez: varsayım olarak yazma" in SYSTEM_PROMPT
     SYSTEM_PROMPT.format(schema="x", today="y")   # süslü parantezler bozulmamış olmalı
 
 
