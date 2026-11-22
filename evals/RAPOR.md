@@ -4,6 +4,26 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# 5. ölçüm — takvim ifadeleri tanımlandıktan sonra (2026-11-22, commit cda1df7)
+
+4. ölçümdeki gürültünün 9/10'u "geçen ay takvim ayı olarak alındı" maddesiydi. "Kurallar" bölümüne takvim ifadelerinin tanımı eklendi: "geçen ay", "bu ay", "geçen yıl" ve "bu yıl". Tanımın yanında bunların Türkçedeki yerleşik anlamlar olduğu ve varsayım olarak yazılmayacağı da söylendi. Böylece bir önceki madde ("kullanıcı talimatları görmez") bu tanıma uygulanmıyor: ölçütün ilk sorusunun cevabı "hayır". Ciro tanımı ise bir iş kararı olarak yazılmaya devam ediyor.
+Yalnızca questions seti koşuldu (`--runs 3`); holdout v1 koşulmadı. Ham sonuç: `2026-11-22_151418_questions_x3.json`.
+
+| Ölçüt | 2. (07299d0) | 3. (8932a8e) | 4. (8d10ab0) | 5. (cda1df7) |
+|---|---|---|---|---|
+| Doğruluk | 60/60 | 60/60 | 60/60 | 60/60 |
+| Beklenmeyen sorularda boş liste | %64,1 | %82,1 | %74,4 | **38/39 (%97,4)** |
+| Beklenen sorularda dolu liste | %95,2 | %57,1 | %100 | **21/21 (%100)** |
+| Tutarsız soru | 2 | 4 | 1 | 1 (9) |
+
+- **"Geçen ay" maddesi tamamen kayboldu.** 9, 11 ve 12'nin 9 denemesinin hiçbirinde artık yok. Doğruluk etkilenmedi: model tanımı SQL'de de doğru uyguluyor.
+- **Beklenen varsayımlar korundu.** Ciro (7, 8, 13, 14), sıfır satışlı ürünler (15) ve oranın paydası (17, 18) 21/21 denemede yazıldı.
+- **Kalan tek gürültü** 9'da tek denemede çıkan şu madde: "geçen aydan sonra kayıt olan müşteriler de sipariş vermemiş sayıldı". `customers.signup_date` sütunu var, yani soru kavramsal olarak yerinde. Ama veride Ekim'den sonra kaydolan müşteri yok (0 kişi), dolayısıyla madde sonucu değiştirmiyor. Bu, kuralın yasakladığı "bu veride gerçekleşmeyen kenar durum" türü. Model bunu verinin içeriğini görmeden bilemez; yalnızca şemayı görüyor. 1/39 düzeyinde kabul edilebilir.
+
+**Toplam sonuç (2. ölçümden 5. ölçüme):** Doğruluk 60/60'ta kaldı. Gereksiz varsayım 14 denemeden 1'e indi. Gerekli varsayımlar 20/21'den 21/21'e çıktı. Bu ölçümler ayar için kullanılan questions setinde yapıldı. Değişikliklerin genellenip genellenmediğini yalnızca yeni ve görülmemiş sorular (holdout_v2) gösterebilir.
+
+---
+
 # 4. ölçüm — "kullanıcı bu talimatları görmez" maddesinden sonra (2026-11-22, commit 8d10ab0)
 
 3. ölçümde ciro sorularındaki varsayımın kaybolduğu görülmüştü. Olası neden: model prompt'taki ciro tanımını "soruda zaten söylenmiş" sayıyordu. Bunun için varsayım kuralına tek bir genel madde eklendi: kullanıcı talimatları görmez, bu yüzden "Kurallar" bölümünden gelen ve soruda açıkça belirtilmeyen bir tanım, iki sorunun cevabı evetse yine yazılır. Maddede ne ciro kelimesi ne de belirli bir soru geçiyor.
