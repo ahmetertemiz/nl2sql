@@ -27,10 +27,18 @@ sys.path.insert(0, str(ROOT))  # "python evals/run_evals.py" ile çalışınca n
 import seed_db  # noqa: E402
 from nl2sql import MODEL, answer, format_sql, run_sql  # noqa: E402
 
-DB_PATH = ROOT / "shop.db"
+DB_PATH = seed_db.DB_PATHS["tr"]
 QUESTIONS = ROOT / "evals" / "questions.yaml"
 SETS = {"questions": QUESTIONS, "holdout": ROOT / "evals" / "holdout.yaml",
-        "holdout_v2": ROOT / "evals" / "holdout_v2.yaml"}
+        "holdout_v2": ROOT / "evals" / "holdout_v2.yaml",
+        "questions_en": ROOT / "evals" / "questions_en.yaml"}
+# Her setin veritabanı dili: referans SQL'ler o veritabanındaki değerlere göre yazılmıştır
+# (ör. 'tamamlandi' / 'completed'). Listede olmayan set Türkçe veritabanını kullanır.
+SET_LANGS = {"questions_en": "en"}
+
+
+def db_for(set_name: str) -> Path:
+    return seed_db.DB_PATHS[SET_LANGS.get(set_name, "tr")]
 RESULTS_DIR = ROOT / "evals" / "results"
 LEVELS = ("kolay", "orta", "zor")
 # Örnek verinin bittiği gün (seed_db.TODAY). Sabit tutuyoruz ki "geçen ay", "son 3 ay"
@@ -250,14 +258,14 @@ def side_by_side(left: str, right: str, width: int = 58) -> str:
     return "\n".join(lines)
 
 
-def check_gold(items: list[dict]) -> None:
+def check_gold(items: list[dict], db_path: Path = DB_PATH) -> None:
     """Referans SQL'ler gerçekten çalışıyor mu ve ne döndürüyor? (API gerektirmez.)"""
     for item in items:
         print(f"\n[{item['id']}] ({item['zorluk']}, {item['kategori']}) {item['soru']}")
         if item["referans_sql"] is None:
             print("    (cevaplanamaz soru: modelin SQL üretmemesi beklenir)")
             continue
-        print(run_sql(DB_PATH, item["referans_sql"]).to_string(index=False))
+        print(run_sql(db_path, item["referans_sql"]).to_string(index=False))
 
 
 def main() -> int:
@@ -273,8 +281,9 @@ def main() -> int:
                         help="Her soruyu N kez sor; kararsız soruları bulmak için")
     args = parser.parse_args()
 
-    if not DB_PATH.exists():  # tohum sabit (seed=42): veri her kurulumda aynı
-        seed_db.build(DB_PATH)
+    db_path = db_for(args.set)
+    if not db_path.exists():  # tohum sabit (seed=42): veri her kurulumda aynı
+        seed_db.build(db_path, lang=SET_LANGS.get(args.set, "tr"))
     items = load_questions(SETS[args.set])
     if args.only:
         items = [item for item in items if item["id"] in args.only]
@@ -283,17 +292,18 @@ def main() -> int:
         return 1
 
     if args.check_gold:
-        check_gold(items)
+        check_gold(items, db_path)
         return 0
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("ANTHROPIC_API_KEY tanımlı değil. Önce anahtarı ayarla (README'ye bak).")
         return 1
 
-    print(f"Model: {MODEL} | Set: {args.set} | Soru: {len(items)} | Koşu: {args.runs} | Bugün: {TODAY}\n")
+    print(f"Model: {MODEL} | Set: {args.set} | Soru: {len(items)} | Koşu: {args.runs} | Bugün: {TODAY} "
+          f"| Veritabanı: {db_path.name}\n")
     records = []
     for item in items:
-        r = evaluate_repeated(item, DB_PATH, args.runs)
+        r = evaluate_repeated(item, db_path, args.runs)
         records.append(r)
         mark = "✓" if r["gecen"] == r["kosu"] else ("~" if r["kararsiz"] else "✗")
         print(f"{mark} [{r['id']:>3}] {r['gecen']}/{r['kosu']} ({r['zorluk']}) {r['soru']}")
@@ -326,7 +336,7 @@ def main() -> int:
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}_{args.set}_x{args.runs}.json"
-    out.write_text(json.dumps({"model": MODEL, "set": args.set, "kosu": args.runs, "bugun": TODAY,
+    out.write_text(json.dumps({"model": MODEL, "set": args.set, "kosu": args.runs, "bugun": TODAY, "veritabani": db_path.name,
                                "ozet": summary, "sorular": records},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nAyrıntılar: {out.relative_to(ROOT)}")

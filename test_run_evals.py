@@ -322,3 +322,23 @@ def test_side_by_side_shows_both_queries():
     text = side_by_side("select a from t", "select b from t")
     assert "ÜRETİLEN" in text and "REFERANS" in text
     assert "SELECT a" in text and "SELECT b" in text
+
+
+def test_each_set_uses_its_own_database():
+    from evals import run_evals
+    import seed_db
+    assert run_evals.db_for("questions") == seed_db.DB_PATHS["tr"]
+    assert run_evals.db_for("holdout_v2") == seed_db.DB_PATHS["tr"]
+    assert run_evals.db_for("questions_en") == seed_db.DB_PATHS["en"]
+
+
+def test_english_set_mirrors_turkish_set():
+    from evals import run_evals
+    tr = run_evals.load_questions(run_evals.SETS["questions"])
+    en = run_evals.load_questions(run_evals.SETS["questions_en"])
+    assert [q["id"] for q in en] == [q["id"] for q in tr]
+    for a, b in zip(tr, en):
+        for key in ("zorluk", "kategori", "sirali", "varsayim_beklenir"):
+            assert a.get(key) == b.get(key), (a["id"], key)
+        assert (a["referans_sql"] is None) == (b["referans_sql"] is None)
+        assert "tamamlandi" not in (b["referans_sql"] or "")

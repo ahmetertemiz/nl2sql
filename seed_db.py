@@ -143,4 +143,4 @@ if __name__ == "__main__":
     parser.add_argument("--lang", choices=["tr", "en", "all"], default="all")
     args = parser.parse_args()
     for lang in (["tr", "en"] if args.lang == "all" else [args.lang]):
-        print(f"Oluşturuldu: {build(lang=lang)}")
+        print(f"Created: {build(lang=lang)}")

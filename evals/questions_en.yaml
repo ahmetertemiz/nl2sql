@@ -1,0 +1,214 @@
+# İngilizce değerlendirme seti: questions.yaml'daki 20 sorunun İngilizce karşılığı.
+# Veritabanı: shop_en.db (seed_db.py --lang en). Aynı tohumla üretildiği için sayısal yapı
+# shop.db ile aynıdır; yalnızca adlar, şehirler, kategoriler, durumlar ve para birimi farklıdır.
+#
+# Alanlar ve varsayim_beklenir ölçütü questions.yaml ile aynıdır (açıklama orada).
+# Etiketler de aynı: 7, 8, 13, 14, 15, 17, 18 true; diğerleri false.
+#
+# Türkçe değerlerin karşılıkları (seed_db.LOCALES'te aynı sıradaki öğe):
+#   tamamlandi/iptal/iade -> completed/cancelled/returned
+#   İstanbul -> London, Ankara -> New York
+#   Elektronik/Spor/Ev/Kitap/Aksesuar -> Electronics/Sports/Home/Books/Accessories
+# Soru 3: "1000 TL üzeri" -> "$40 üzeri"; iki eşik aynı 8 ürünü seçer.
+#
+# "Today" is fixed at 2026-11-20 (seed_db.TODAY): "last month" = October 2026.
+
+- id: 1
+  soru: How many customers are there in total?
+  referans_sql: SELECT COUNT(*) FROM customers
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: filtreleme
+  sirali: false
+
+- id: 2
+  soru: How many customers live in New York?
+  referans_sql: SELECT COUNT(*) FROM customers WHERE city = 'New York'
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: filtreleme
+  sirali: false
+
+- id: 3
+  soru: What are the names and prices of products with a list price above $40?
+  referans_sql: SELECT name, price FROM products WHERE price > 40
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: filtreleme
+  sirali: false
+
+- id: 4
+  soru: How many products are there in each category?
+  referans_sql: SELECT category, COUNT(*) FROM products GROUP BY category
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: gruplama
+  sirali: false
+
+- id: 5
+  soru: How many orders are there for each order status?
+  referans_sql: SELECT status, COUNT(*) FROM orders GROUP BY status
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: gruplama
+  sirali: false
+
+- id: 6
+  soru: Regardless of status, how many customers have placed at least 10 orders?
+  referans_sql: >-
+    SELECT COUNT(*) FROM (SELECT customer_id FROM orders GROUP BY customer_id HAVING COUNT(*) >= 10)
+  zorluk: orta
+  varsayim_beklenir: false
+  kategori: gruplama
+  sirali: false
+
+- id: 7
+  soru: What is the total revenue by category?
+  referans_sql: >-
+    SELECT p.category, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'completed' GROUP BY p.category
+  zorluk: orta
+  varsayim_beklenir: true
+  kategori: join
+  sirali: false
+
+- id: 8
+  soru: What are the names and total revenue of the 5 customers who brought in the most revenue? Sort from highest to lowest.
+  referans_sql: >-
+    SELECT c.name, SUM(oi.quantity * oi.unit_price) AS revenue
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id
+    WHERE o.status = 'completed' GROUP BY c.id ORDER BY revenue DESC LIMIT 5
+  zorluk: orta
+  varsayim_beklenir: true
+  kategori: join
+  sirali: true
+
+- id: 9
+  soru: How many customers placed no orders at all last month? The order status does not matter.
+  referans_sql: >-
+    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
+    (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND strftime('%Y-%m', o.order_date) = '2026-10')
+  zorluk: zor
+  varsayim_beklenir: false
+  kategori: join
+  sirali: false
+
+- id: 10
+  soru: In completed orders of customers in London, how many units were sold in total from each category?
+  referans_sql: >-
+    SELECT p.category, SUM(oi.quantity)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    JOIN customers c ON c.id = o.customer_id JOIN products p ON p.id = oi.product_id
+    WHERE c.city = 'London' AND o.status = 'completed' GROUP BY p.category
+  zorluk: zor
+  varsayim_beklenir: false
+  kategori: join
+  sirali: false
+
+- id: 11
+  soru: How many orders were placed last month? Count all statuses.
+  referans_sql: SELECT COUNT(*) FROM orders WHERE strftime('%Y-%m', order_date) = '2026-10'
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: tarih
+  sirali: false
+
+- id: 12
+  # 4, bilerek: 3. ve 4. ürün eşit (73 adet), "top 3" tek bir doğru cevaba sahip olmazdı.
+  soru: In last month's completed orders, what are the names and unit sales of the 4 best-selling products by units?
+  referans_sql: >-
+    SELECT p.name, SUM(oi.quantity) AS units
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
+    WHERE o.status = 'completed' AND strftime('%Y-%m', o.order_date) = '2026-10'
+    GROUP BY p.id ORDER BY units DESC LIMIT 4
+  zorluk: orta
+  varsayim_beklenir: false
+  kategori: tarih
+  sirali: false
+
+- id: 13
+  soru: What is the total revenue for each of the last 3 completed months? Show the month as YYYY-MM and sort from oldest to newest.
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'completed' AND o.order_date >= '2026-08-01' AND o.order_date < '2026-11-01'
+    GROUP BY month ORDER BY month
+  zorluk: zor
+  varsayim_beklenir: true
+  kategori: tarih
+  sirali: true
+
+- id: 14
+  soru: What is the total revenue by month in 2026? Show the month as YYYY-MM and sort from oldest to newest.
+  referans_sql: >-
+    SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity * oi.unit_price)
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'completed' AND strftime('%Y', o.order_date) = '2026'
+    GROUP BY month ORDER BY month
+  zorluk: orta
+  varsayim_beklenir: true
+  kategori: tarih
+  sirali: true
+
+- id: 15
+  # Sıfır satışlı ürünler de sonuçta olmalı: satış kalemlerinden başlayan bir INNER JOIN onları göremez.
+  soru: In orders completed on October 2, 2026, what are the names and unit sales of products that sold fewer than 3 units?
+  referans_sql: >-
+    SELECT p.name, COALESCE(SUM(t.quantity), 0) AS units FROM products p
+    LEFT JOIN (SELECT oi.product_id, oi.quantity FROM order_items oi JOIN orders o ON o.id = oi.order_id
+               WHERE o.status = 'completed' AND o.order_date = '2026-10-02') t ON t.product_id = p.id
+    GROUP BY p.id HAVING units < 3
+  zorluk: zor
+  varsayim_beklenir: true
+  kategori: tarih
+  sirali: false
+
+- id: 16
+  soru: What percentage of all orders were returned?
+  referans_sql: SELECT 100.0 * SUM(status = 'returned') / COUNT(*) FROM orders
+  zorluk: orta
+  varsayim_beklenir: false
+  kategori: oran
+  sirali: false
+
+- id: 17
+  # ilk_satir: "which city" tek satır bekler, ama tüm şehirleri orana göre azalan sırada
+  # listelemek de soruyu cevaplar (ilk satır en yüksek olandır). Liste doğru sıralıysa geçer.
+  ilk_satir: true
+  soru: Which city has the highest return rate among its customers' orders? Show the city and the return rate as a percentage.
+  referans_sql: >-
+    SELECT c.city, 100.0 * SUM(o.status = 'returned') / COUNT(*) AS rate
+    FROM orders o JOIN customers c ON c.id = o.customer_id
+    GROUP BY c.city ORDER BY rate DESC LIMIT 1
+  zorluk: zor
+  varsayim_beklenir: true
+  kategori: oran
+  sirali: false
+
+- id: 18
+  soru: For each category, what percentage of orders containing at least one product from that category were returned?
+  referans_sql: >-
+    SELECT p.category, 100.0 * COUNT(DISTINCT CASE WHEN o.status = 'returned' THEN o.id END) / COUNT(DISTINCT o.id)
+    FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id
+    GROUP BY p.category
+  zorluk: zor
+  varsayim_beklenir: true
+  kategori: oran
+  sirali: false
+
+- id: 19
+  soru: What are the customers' email addresses?
+  referans_sql: null
+  zorluk: kolay
+  varsayim_beklenir: false
+  kategori: cevaplanamaz
+  sirali: false
+
+- id: 20
+  soru: How many units of each product are left in stock in the warehouse?
+  referans_sql: null
+  zorluk: orta
+  varsayim_beklenir: false
+  kategori: cevaplanamaz
+  sirali: false
