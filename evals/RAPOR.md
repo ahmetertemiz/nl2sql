@@ -4,6 +4,33 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# 3. ölçüm — varsayım kuralı sıkılaştırıldıktan sonra (2026-11-22, commit 8932a8e)
+
+Değişen tek şey prompt'taki varsayım kuralı. Yeni kural iki soruluk ölçütle başlıyor ("başka bir yorum beklenebilir miydi, farklı bir sayı verir miydi"). Dört gürültü türünü (soruyu tekrar etmek, sonucu değiştirmeyen teknik ayrıntı, gerçekleşmeyen kenar durum, yapılmayan işlemi bildirmek) açıkça yasaklıyor. Madde sınırı 3'ten 2'ye indi.
+Yalnızca questions seti koşuldu (`--runs 3`). Holdout v1 bu tur koşulmadı: o set ayar için kullanılmış sayılıyor.
+"Önce" sütunu, 2. ölçümün ham sonucuna (`2026-11-21_213441_questions_x3.json`) yeni `varsayim_beklenir` etiketleri uygulanarak hesaplandı. "Sonra": `2026-11-22_105409_questions_x3.json`.
+
+## Önce / sonra
+
+| Ölçüt | Önce (07299d0) | Sonra (8932a8e) | Değişim |
+|---|---|---|---|
+| Doğruluk | 60/60 (%100) | 60/60 (%100) | — |
+| Beklenmeyen sorularda boş liste | 25/39 (%64,1) | 32/39 (%82,1) | +18,0 puan |
+| Beklenen sorularda dolu liste | 20/21 (%95,2) | 12/21 (%57,1) | **−38,1 puan** |
+| Denemeler arası tutarsız soru | 2 (8, 16) | 4 (7, 8, 9, 13) | +2 |
+
+Doğruluk düşmediği için değişiklik geri alınmadı (kural: "doğruluk düşerse geri al"). Ama değişiklik net bir iyileşme değil, bir takas:
+
+- **Gürültü azaldı.** 10 ve 16'daki gereksiz varsayımlar tamamen kayboldu. 9 tek denemeye indi.
+- **Gerçek belirsizlik de susturuldu.** Ciro sorularında (7, 8, 13, 14) "yalnızca tamamlanan siparişler sayıldı" varsayımı 12 denemenin 9'unda yazılmadı. 14'te hiç yazılmadı. Bu kayıp ciro sorularının tamamından geliyor. 15, 17 ve 18 hâlâ 3/3 doğru varsayım yazıyor.
+- **Tutarsızlık arttı.** 7, 8 ve 13'te model aynı soruda bazen yazıyor, bazen yazmıyor.
+
+**Olası neden (sınıflandırma, düzeltme değil):** Ciro tanımı ("yalnızca tamamlanan siparişler") prompt'ta bir kural olarak duruyor. Model bunu sorunun bir parçası gibi görüp "soruda söyleneni tekrar etme" yasağına sokuyor olabilir. Oysa kullanıcı bu kuralı görmüyor. 15, 17 ve 18'deki kararlar prompt'ta yazmıyor ve bunlar etkilenmedi; bu da açıklamayla tutarlı.
+
+**Kalan gürültü:** 11 ve 12'de "geçen ay takvim ayı olarak yorumlandı" maddesi 6/6 denemede hâlâ var. Etiket ölçütüne göre bu gereksiz: Türkçede "geçen ay"ın yerleşik anlamı bir önceki takvim ayı. Yeni kural bu türü kapatmadı, çünkü model "son 30 gün" yorumunu makul ve farklı sayı veren bir alternatif sayıyor. Ölçütün kendisi bu konuda iki türlü okunabiliyor.
+
+---
+
 # 2. ölçüm — "assumptions" alanından sonra (2026-11-21, commit 07299d0 sonrası)
 
 Değişen tek şey prompt: modele soruda açık olmayan kararlarını `assumptions` listesinde yazması söylendi. Holdout v1 dondurulmuş durumda; `kabul_edilen` / `ilk_satir` alanları ona eklenmedi. questions.yaml'daki 17. soruya `ilk_satir` eklendi, ama o soru iki ölçümde de 3/3 geçti, yani sonucu etkilemedi.
