@@ -92,7 +92,7 @@ def test_count_star_and_case_insensitive_names_allowed(db):
     "SELECT name FROM customers",                                   # özyinelemeli CTE kılıfı
 ])
 def test_disallowed_access_rejected(db, sql):
-    with pytest.raises(UnsafeSQL, match="izin verilmeyen"):
+    with pytest.raises(UnsafeSQL, match="not allowed"):
         run_sql(db, sql, ALLOWED)
 
 
@@ -120,14 +120,14 @@ HIDDEN_ACCESS = {
 
 @pytest.mark.parametrize("sql", HIDDEN_ACCESS.values(), ids=HIDDEN_ACCESS.keys())
 def test_parser_rejects_hidden_access(db, sql):
-    with pytest.raises(UnsafeSQL, match="izin verilmeyen"):
+    with pytest.raises(UnsafeSQL, match="not allowed"):
         check_access(sql, ALLOWED, list_columns(db))
 
 
 def test_parser_names_the_hidden_column(db):
     with pytest.raises(UnsafeSQL, match=r"customers\.name"):
         check_access("SELECT c.name AS x FROM customers c", ALLOWED, list_columns(db))
-    with pytest.raises(UnsafeSQL, match=r"\* kullanılamaz"):
+    with pytest.raises(UnsafeSQL, match=r"\* cannot be used"):
         check_access("SELECT * FROM customers", ALLOWED, list_columns(db))
 
 
@@ -233,7 +233,7 @@ SLOW_SQL = ("WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHER
 
 def test_slow_query_is_stopped(db):
     start = time.monotonic()
-    with pytest.raises(QueryTimeout, match="0.3 saniyede"):
+    with pytest.raises(QueryTimeout, match="within 0.3 seconds"):
         run_sql(db, SLOW_SQL, timeout=0.3)
     assert time.monotonic() - start < 2  # gerçekten erken kesildi
 

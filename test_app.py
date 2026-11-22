@@ -26,8 +26,10 @@ def calls(monkeypatch):
     return log
 
 
-def open_app() -> AppTest:
+def open_app(lang: str = "tr") -> AppTest:
+    """Eski testler Türkçe metinleri denetler; varsayılan dil (en) ayrı testlerde."""
     at = AppTest.from_file("app.py", default_timeout=30)
+    at.session_state["lang"] = lang
     at.run()
     at.multiselect(key="cols_customers").set_value(["id", "city"]).run()
     return at
@@ -124,7 +126,7 @@ def asked(at: AppTest) -> AppTest:
 def test_interpret_off_by_default_no_button_no_call(calls, comments):
     at = asked(open_app())
     assert not any(b.label == "Yorumla" for b in at.button)
-    assert not any("yapay zeka" in c.value for c in at.main.caption)
+    assert not any("yapay zeka" in c.value.lower() for c in at.main.caption)
     assert comments == []
 
 
@@ -138,7 +140,7 @@ def test_interpret_on_shows_warning_and_button_and_calls_once(calls, comments):
     assert len(comments) == 1 and comments[0]["question"] == "İstanbul'da kaç müşteri var?"
     assert len(calls) == 1                                   # sorgu yeniden çalışmadı
     assert any("Sahte yorum" in s.value for s in at.success)
-    assert any("yapay zeka tarafından üretildi; sayıları tabloyla karşılaştır" in c.value
+    assert any("Yapay zeka tarafından üretildi; sayıları tabloyla karşılaştır." == c.value
                for c in at.main.caption)
     assert next(b for b in at.button if b.label == "Yorumla").disabled  # ikinci kez ücret yok
 
@@ -260,3 +262,39 @@ def test_daily_limit_also_covers_interpret(key_calls, comments, monkeypatch):
     next(b for b in at.button if b.label == "Yorumla").click().run()
     assert comments == []
     assert any("demo hakkı doldu" in w.value for w in at.warning)
+
+
+# --- İki dil: varsayılan İngilizce, Türkçe seçilebilir ---
+
+def test_default_language_is_english(calls):
+    at = AppTest.from_file("app.py", default_timeout=30)
+    at.run()
+    assert at.selectbox(key="lang").value == "en"
+    assert at.title[0].value == "Ask Your Data in Plain Language"
+    assert any("select the columns" in i.value for i in at.info)
+
+
+def test_switching_language_changes_texts(calls):
+    at = open_app("en")
+    assert any(b.label == "Send" for b in at.button)
+    at.selectbox(key="lang").set_value("tr").run()
+    assert any(b.label == "Gönder" for b in at.button)
+    assert at.title[0].value == "Doğal Dille SQL"
+    assert calls == []                                       # dil değişimi model çağırmaz
+
+
+def test_english_ai_note_and_assumptions_heading(calls, comments, monkeypatch):
+    monkeypatch.setattr(nl2sql, "answer", _answer_with(["Only completed orders were counted."]))
+    at = open_app("en")
+    at.toggle(key="interpret_on").set_value(True).run()
+    at.text_input(key="question").input("How many customers?")
+    next(b for b in at.button if b.label == "Send").click().run()
+    assert "**Assumptions**" in [m.value for m in at.main.markdown]
+    next(b for b in at.button if b.label == "Interpret").click().run()
+    assert any(c.value == "AI-generated; compare the numbers with the table." for c in at.main.caption)
+
+
+def test_changing_language_marks_result_stale(calls):
+    at = asked(open_app("tr"))
+    at.selectbox(key="lang").set_value("en").run()
+    assert any("earlier question or settings" in w.value for w in at.warning)

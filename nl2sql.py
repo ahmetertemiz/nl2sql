@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import i18n
+
 MODEL = os.getenv("NL2SQL_MODEL", "claude-sonnet-5-5")
 MAX_ROWS = 500
 QUERY_TIMEOUT_S = float(os.getenv("NL2SQL_QUERY_TIMEOUT", "5"))  # tek sorgu için üst süre
@@ -159,12 +161,36 @@ FORBIDDEN = re.compile(
 )
 
 
-class UnsafeSQL(ValueError):
+class LocalizedError(Exception):
+    """Kullanıcıya gösterilen hata: metin değil anahtar taşır, dil gösterim anında seçilir.
+
+    str(exc) İngilizce metni verir (günlükler ve modele geri bildirim için);
+    exc.localized("tr") seçilen dildeki metni.
+    """
+
+    def __init__(self, key: str, **params):
+        self.key, self.params = key, params
+        super().__init__(self.localized("en"))
+
+    def localized(self, lang: str) -> str:
+        return i18n.error_text(lang, self.key, self.params)
+
+
+class UnsafeSQL(LocalizedError, ValueError):
     pass
 
 
-class QueryTimeout(RuntimeError):
+class QueryTimeout(LocalizedError, RuntimeError):
     pass
+
+
+class SQLParseError(LocalizedError, ValueError):
+    pass
+
+
+def error_message(exc: Exception, lang: str) -> str:
+    """Hata mesajı seçilen dilde; çevirisi olmayan (ör. SQLite'ın kendi) hatalar olduğu gibi."""
+    return exc.localized(lang) if isinstance(exc, LocalizedError) else str(exc)
 
 
 # İzin listesi: {"tablo": ["sütun", ...]}. None = her şeye izin (değerlendirme ve testler için).
@@ -284,15 +310,15 @@ def validate_sql(sql: str) -> str:
     """LLM çıktısına güvenme: yalnızca tek bir salt-okunur sorguya izin ver."""
     cleaned = re.sub(r"--[^\n]*|/\*.*?\*/", " ", sql, flags=re.DOTALL).strip().rstrip(";").strip()
     if not cleaned:
-        raise UnsafeSQL("Boş sorgu.")
+        raise UnsafeSQL("err_empty")
     if ";" in cleaned:
-        raise UnsafeSQL("Birden fazla SQL ifadesine izin verilmiyor.")
+        raise UnsafeSQL("err_multi")
     if not re.match(r"^(select|with)\b", cleaned, re.IGNORECASE):
-        raise UnsafeSQL("Yalnızca SELECT sorgularına izin veriliyor.")
+        raise UnsafeSQL("err_select_only")
     # Metin sabitlerinin içindeki kelimeler yanlış alarm vermesin
     without_strings = re.sub(r"'(?:[^']|'')*'", "''", cleaned)
     if FORBIDDEN.search(without_strings):
-        raise UnsafeSQL("Sorgu veriyi değiştiren bir komut içeriyor.")
+        raise UnsafeSQL("err_modifies")
     return cleaned
 
 
@@ -328,9 +354,10 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
     try:
         tree = sqlglot.parse_one(sql, dialect="sqlite")
     except ParseError as exc:
-        raise ValueError(f"SQL ayrıştırılamadı: {exc}") from exc
+        raise SQLParseError("err_parse", detail=str(exc)) from exc
 
     denied: set[str] = set()
+    stars: set[str] = set()  # gizli sütunlu tabloda * kullanımı; mesajı dile göre ayrı kurulur
 
     # 1) SELECT * ve t.*: gizli sütunu olan bir tabloda yıldız kullanılamaz.
     #    (Yıldız genişletilmeden önce kontrol edilir ki hata mesajı anlaşılır olsun.)
@@ -350,7 +377,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
                 if isinstance(src, exp.Table) and src.name.lower() in real:
                     table = src.name.lower()
                     if ok.get(table) != real[table]:
-                        denied.add(f"{src.name}.* (gizli sütun içeren tabloda * kullanılamaz)")
+                        stars.add(src.name)
 
     # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
     #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
@@ -385,12 +412,12 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
                         if name in real[table] and name not in ok.get(table, set()):
                             denied.add(f"{src.name}.{col.name}")
 
-    if denied:
-        raise UnsafeSQL("Sorgu izin verilmeyen tablo/sütunlara erişmeye çalıştı: "
-                        + ", ".join(sorted(denied)))
+    if denied or stars:
+        raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars))
 
 
-def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str]):
+def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str],
+                ops: list[int]):
     """SQLite, sorguyu derlerken her tablo/sütun okumasını bu fonksiyona sorar.
 
     Regex'ten farklı olarak SQL'i SQLite'ın kendisi çözümler; takma ad, alt sorgu,
@@ -414,7 +441,7 @@ def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: lis
                 return sqlite3.SQLITE_OK
             denied.append(f"{arg1}.{arg2}" if arg2 else str(arg1))
         else:  # PRAGMA, ATTACH vb. her şey: zaten salt-okunuruz ama yine de kapalı
-            denied.append(f"işlem {action}")
+            ops.append(action)
         return sqlite3.SQLITE_DENY
 
     return check
@@ -426,12 +453,13 @@ def run_sql(db_path: Path, sql: str, allowed: Allowed | None = None,
     -> yetkilendirici (veritabanı, izin listesi) -> salt-okunur bağlantı -> süre sınırı."""
     safe = validate_sql(sql)
     denied: list[str] = []
+    ops: list[int] = []
     with closing(_connect_ro(db_path)) as con:
         if allowed is not None:
             check_access(safe, allowed, _columns(con))
             real_tables = {r[0].lower() for r in con.execute(
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
-            con.set_authorizer(_authorizer(_normalize(allowed), real_tables, denied))
+            con.set_authorizer(_authorizer(_normalize(allowed), real_tables, denied, ops))
         deadline = time.monotonic() + timeout
         # SQLite her ~10 bin sanal makine adımında bu fonksiyonu çağırır;
         # sıfırdan farklı dönerse sorgu yarıda kesilir ("interrupted").
@@ -439,16 +467,11 @@ def run_sql(db_path: Path, sql: str, allowed: Allowed | None = None,
         try:
             return pd.read_sql_query(f"SELECT * FROM ({safe}) LIMIT {MAX_ROWS}", con)
         except Exception as exc:
-            if denied:
-                raise UnsafeSQL(
-                    "Sorgu izin verilmeyen tablo/sütunlara erişmeye çalıştı: "
-                    + ", ".join(sorted(set(denied)))
-                ) from exc
+            if denied or ops:
+                raise UnsafeSQL("err_denied", names=sorted(set(denied)),
+                                ops=sorted(set(ops))) from exc
             if time.monotonic() > deadline:
-                raise QueryTimeout(
-                    f"Sorgu {timeout:g} saniyede bitmediği için durduruldu. "
-                    "Soruyu daraltmayı dene (ör. tarih aralığı ekle)."
-                ) from exc
+                raise QueryTimeout("err_timeout", seconds=f"{timeout:g}") from exc
             raise
 
 
@@ -511,10 +534,11 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
 
 def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
            allowed: Allowed | None = None, value_columns: Allowed | None = None,
-           api_key: str | None = None) -> dict:
+           api_key: str | None = None, lang: str = i18n.DEFAULT_LANG) -> dict:
     """Uçtan uca: soru -> SQL -> sonuç. SQL hata verirse modele hatayı gösterip bir kez daha dener.
 
     İzinsiz erişim (UnsafeSQL) ve süre aşımı (QueryTimeout) yeniden denenmez; kullanıcıya gösterilir.
+    lang: dönen "error" metninin dili (arayüz dili).
     """
     schema = get_schema(db_path, allowed, value_columns)
     feedback = None
@@ -526,8 +550,8 @@ def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
             df = run_sql(db_path, result["sql"], allowed)
             return {**result, "df": df, "error": None}
         except (UnsafeSQL, QueryTimeout) as exc:  # yeniden deneme bekleme süresini ikiye katlardı
-            return {**result, "df": None, "error": str(exc)}
+            return {**result, "df": None, "error": error_message(exc, lang)}
         except Exception as exc:  # SQL sözdizimi / olmayan sütun vb.
             feedback = f"SQL: {result['sql']}\nHata: {exc}"
             if attempt == max_retries:
-                return {**result, "df": None, "error": str(exc)}
+                return {**result, "df": None, "error": error_message(exc, lang)}
