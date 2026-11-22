@@ -5,7 +5,6 @@ A text-to-SQL tool. You ask a question in plain language (English or Turkish), C
 *Türkçe özet [aşağıda](#türkçe).*
 
 ![Screenshot](docs/screenshot.png)
-<!-- Ekran görüntüsünü docs/screenshot.png olarak ekle. -->
 
 ## Highlights
 
