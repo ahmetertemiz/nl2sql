@@ -5,6 +5,7 @@ __pycache__/
 
 # Üretilen dosyalar: seed_db.py ile her zaman yeniden oluşturulabilir
 shop.db
+shop_en.db
 
 # Değerlendirme çıktıları (her çalıştırmada yeni tarihli dosya)
 evals/results/

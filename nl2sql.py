@@ -36,8 +36,7 @@ Rules:
   "last year" / "geçen yıl" = the previous calendar year; "this year" / "bu yıl" = the current calendar
   year. These are the established meanings; the user does not expect another interpretation, so do
   not list them as assumptions. (Explicit ranges such as "last 30 days" are applied as stated.)
-- Revenue = quantity * unit_price. Unless asked otherwise, count only orders with status = 'tamamlandi'
-  in revenue.
+- Revenue = quantity * unit_price. Unless asked otherwise, count only {revenue_orders} in revenue.
 - In questions such as "least sold", "fewer than X units" or "never ordered", do not lose rows whose
   value is zero: start from the main table (e.g. FROM products, FROM customers), attach the transaction
   tables with LEFT JOIN, put date/status filters in a subquery or the ON clause instead of WHERE, and
@@ -524,9 +523,37 @@ def response_text(content) -> str:
     return "".join(block.text for block in content if block.type == "text")
 
 
+# "Tamamlandı" anlamına gelen durum değerleri; hangisinin kullanıldığı veritabanından okunur.
+COMPLETED_STATUSES = ("tamamlandi", "completed")
+
+
+def completed_status(db_path: Path) -> str | None:
+    """Veritabanındaki 'tamamlanmış sipariş' durum değeri (ör. 'tamamlandi' ya da 'completed').
+
+    Ciro kuralı prompt'a sabit bir değerle yazılmaz: Türkçe ve İngilizce veritabanı farklı
+    değerler kullanır. orders.status yoksa ya da tanınan bir değer yoksa None.
+    """
+    try:
+        with closing(_connect_ro(db_path)) as con:
+            values = {r[0] for r in con.execute("SELECT DISTINCT status FROM orders")}
+    except sqlite3.Error:
+        return None
+    return next((v for v in COMPLETED_STATUSES if v in values), None)
+
+
+def build_system_prompt(schema: str, today: str, completed: str | None) -> str:
+    """Değer bulunamazsa kural yine durur, yalnızca sütun değeri yazılmaz."""
+    revenue_orders = (f"orders with status = '{completed}'" if completed
+                      else "completed orders")
+    return SYSTEM_PROMPT.format(schema=schema, today=today, revenue_orders=revenue_orders)
+
+
 def generate_sql(question: str, schema: str, today: str, error_feedback: str | None = None,
-                 api_key: str | None = None) -> dict:
-    """Soruyu Claude'a gönderir. error_feedback doluysa önceki hatayı düzelttirir."""
+                 api_key: str | None = None, completed: str | None = None) -> dict:
+    """Soruyu Claude'a gönderir. error_feedback doluysa önceki hatayı düzelttirir.
+
+    completed: ciro kuralında kullanılacak durum değeri (completed_status ile okunur).
+    """
     import anthropic  # geç import: testler API anahtarı olmadan çalışabilsin
 
     client = anthropic.Anthropic(api_key=api_key)  # None ise ANTHROPIC_API_KEY ortam değişkenini okur
@@ -538,7 +565,7 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
     response = client.messages.create(
         model=MODEL,
         max_tokens=16000,  # düşünme (thinking) de bu sınırdan yer; 1024 cevabı kesebilir
-        system=SYSTEM_PROMPT.format(schema=schema, today=today),
+        system=build_system_prompt(schema, today, completed),
         messages=messages,
     )
     return parse_llm_json(response_text(response.content))
@@ -553,9 +580,10 @@ def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
     lang: dönen "error" metninin dili (arayüz dili).
     """
     schema = get_schema(db_path, allowed, value_columns)
+    completed = completed_status(db_path)
     feedback = None
     for attempt in range(max_retries + 1):
-        result = generate_sql(question, schema, today, feedback, api_key=api_key)
+        result = generate_sql(question, schema, today, feedback, api_key=api_key, completed=completed)
         if not result["sql"]:
             return {**result, "df": None, "error": None}
         try:

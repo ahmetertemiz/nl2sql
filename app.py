@@ -1,7 +1,6 @@
 """Doğal dille SQL — Streamlit arayüzü. Çalıştır: streamlit run app.py"""
 import json
 import os
-from pathlib import Path
 
 import streamlit as st
 
@@ -11,7 +10,6 @@ from charts import make_chart
 from i18n import DEFAULT_LANG, LANGS, t
 from nl2sql import INTERPRET_MAX_ROWS, answer, format_sql, get_schema, interpret_result, list_columns
 
-DB_PATH = Path(__file__).parent / "shop.db"
 TODAY = seed_db.TODAY.isoformat()  # örnek verinin bittiği gün; gerçek tarih değil (bkz. seed_db.py)
 # Ortak anahtarla günde en fazla kaç model çağrısı yapılabilir. 0 = sınırsız (yerel kullanım).
 DAILY_LIMIT = int(os.getenv("NL2SQL_DAILY_LIMIT", "0"))
@@ -23,8 +21,10 @@ EXAMPLES = t(lang, "examples")
 
 st.set_page_config(page_title=t(lang, "page_title"), page_icon="🔎", layout="wide")
 
+# Her dilin kendi örnek veritabanı var (shop.db / shop_en.db); tablo ve sütun adları aynı.
+DB_PATH = seed_db.DB_PATHS[lang]
 if not DB_PATH.exists():
-    seed_db.build(DB_PATH)
+    seed_db.build(DB_PATH, lang=lang)
 
 COLUMNS = list_columns(DB_PATH)
 

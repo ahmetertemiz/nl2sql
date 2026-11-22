@@ -377,7 +377,7 @@ def test_prompt_asks_for_empty_assumptions_on_clear_questions():
         assert phrase in SYSTEM_PROMPT
     # Prompt'taki tanım kuralları kullanıcıya görünmez; "soruda söylendi" sayılmamalı
     assert "The user does not see these instructions" in SYSTEM_PROMPT
-    SYSTEM_PROMPT.format(schema="x", today="y")   # süslü parantezler bozulmamış olmalı
+    SYSTEM_PROMPT.format(schema="x", today="y", revenue_orders="z")   # süslü parantezler bozulmamış olmalı
 
 
 def test_prompt_keeps_revenue_and_zero_row_rules():

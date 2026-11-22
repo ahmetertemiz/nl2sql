@@ -298,3 +298,20 @@ def test_changing_language_marks_result_stale(calls):
     at = asked(open_app("tr"))
     at.selectbox(key="lang").set_value("en").run()
     assert any("earlier question or settings" in w.value for w in at.warning)
+
+
+def test_each_language_opens_its_own_database(monkeypatch):
+    seen = []
+
+    def fake_answer(question, db_path, today, **_):
+        seen.append(db_path.name)
+        return {"sql": "SELECT 1", "explanation": "", "chart": "none", "x": None, "y": None,
+                "df": pd.DataFrame({"n": [1]}), "error": None}
+
+    monkeypatch.setattr(nl2sql, "answer", fake_answer)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    asked(open_app("tr"))
+    at = open_app("en")
+    at.text_input(key="question").input("How many customers?")
+    next(b for b in at.button if b.label == "Send").click().run()
+    assert seen == ["shop.db", "shop_en.db"]
