@@ -4,6 +4,45 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# Holdout v2 (2026-11-22, prompt commit cda1df7)
+
+20 yeni soru (201–220). Sohbetteki Claude yazdı, referanslar shop.db üzerinde doğrulandı (commit 355804c). Prompt'u ayarlarken bu sorular görülmedi. Bu ölçümden sonra da sorular, referanslar, etiketler ve prompt değiştirilmedi.
+`--check-gold`: 17 referans sorgunun hepsi hatasız çalıştı (215–217 cevaplanamaz). Ham sonuç: `2026-11-22_163505_holdout_v2_x3.json` (`--runs 3`).
+
+| Ölçüt | Holdout v2 | questions (5. ölçüm, aynı prompt) |
+|---|---|---|
+| Doğruluk | **60/60 (%100)** | 60/60 |
+| — kolay / orta / zor | 9/9 · 30/30 · 21/21 | |
+| Kararsız / hep kalan | yok / yok | yok / yok |
+| Beklenmeyen sorularda boş liste | **9/18 (%50,0)** | 38/39 (%97,4) |
+| Beklenen sorularda dolu liste | 42/42 (%100) | 21/21 (%100) |
+| Denemeler arası tutarsız soru | yok | 1 |
+
+## Başarısız sorular
+
+Yok. 20 sorunun hepsi 3/3 geçti. Bu nedenle sınıflandırılacak doğruluk hatası (model hatası / belirsiz soru / hatalı referans / ölçüt katılığı) bulunmuyor.
+- 60 denemenin 7'si `kabul_edilen` alternatifiyle geçti: 201 (2/3), 205 (3/3), 219 (3/3). Üçünde de model "yalnızca tamamlanan siparişler" yorumunu seçti ve bunu varsayım olarak yazdı. Bu alternatifler soru yazılırken, model cevapları görülmeden tanımlanmıştı. Tanımlanmasalardı bu 7 deneme kalırdı ve hepsi "belirsiz soru" sınıfına girerdi.
+- Cevaplanamaz üç soru (215 teslim süresi, 216 kâr marjı, 217 cinsiyet) 9/9 denemede SQL üretmeden reddedildi. Tuzaklara düşülmedi: model liste ve satış fiyatı farkını kâr saymadı, adlardan cinsiyet tahmin etmedi.
+
+## Varsayımlar: neden %50?
+
+Varsayım beklenmeyen 6 sorudan 3'ü (215–217, cevaplanamaz) her denemede boş liste verdi. Diğer üçü (206, 208, 209) her denemede dolu çıktı. 9 gereksiz listenin hepsi bu üç sorudan geliyor. Her maddenin bu veride sonucu değiştirip değiştirmediği elle kontrol edildi:
+
+| Soru | Modelin yazdığı | Bu veride sonucu değiştiriyor mu? | Sınıf |
+|---|---|---|---|
+| 206 "içinde 3 farklı ürün olan kaç sipariş" | "Sipariş durumuna bakılmadı" (3/3) | **Evet:** tüm durumlar 509, yalnızca tamamlanan 452 | Etiket tutarsızlığı (aşağıda) |
+| 206 | "Tam 3, 3 veya fazlası değil" (2/3) | Hayır: hiçbir siparişte 3'ten fazla ürün yok (≥3 de 509) | Gürültü: veride gerçekleşmeyen kenar durum |
+| 208 "kayıt olduğu gün ilk siparişini veren" | "İlk sipariş için tüm durumlar dikkate alındı" (3/3) | Hayır: iki yorum da 6 | Gürültü: veride gerçekleşmeyen kenar durum |
+| 209 "en yüksek tutarlı sipariş kimindi" | "Yalnızca tamamlanan siparişler" (3/3) | Hayır: en büyük sipariş zaten tamamlanmış (yorum alanında da yazıyor) | Gürültü: veride gerçekleşmeyen kenar durum |
+
+**Hatalı olabilecek etiket (yalnızca raporlanıyor, değiştirilmedi): 206.** Sipariş durumu belirsizliği aynı sette 203, 207, 211, 218 ve 219'da `varsayim_beklenir: true` sayılmış ve bu sorulara `kabul_edilen` alternatifi eklenmiş. 206'da da durum yorumu farklı sayı veriyor (509 / 452). Dosyanın kendi ölçütüne göre 206 `true` olmalı. Etiket `true` olsaydı oran 9/15 (%60) olurdu. Referans SQL ise doğru ve tamamlanan siparişler yorumu için `kabul_edilen` yok, ama model üç denemede de referansın yorumunu seçtiği için doğruluk etkilenmedi.
+
+**Gürültünün kalıbı.** Kalan üç madde de questions setinde 9. sorudaki tek gürültüyle aynı türden: model bir yorum farkını fark ediyor ve farkın bu veride sonucu değiştirip değiştirmediğini bilmeden yazıyor. Prompt bu türü yasaklıyor ("bu veride gerçekleşmeyen kenar durumlar"). Ama model yalnızca şemayı görüyor, verinin içeriğini görmüyor. Bu yüzden "bu veride farklı bir sayı verir miydi?" sorusunu çoğu zaman cevaplayamıyor ve emin olmadığında yazmayı seçiyor. Durum belirsizliği şemadan görülebildiği için (`status` sütunu) holdout v2'nin sorularında bu kalıp sık çıkıyor. questions setinde ise prompt'u ayarlarken görülen sorular bu türden çoğunlukla arındırılmıştı.
+
+**Yorum.** Doğruluk yeni sorulara genellendi (60/60). Gerekli varsayımlar da genellendi (42/42). "Gereksiz varsayım yazma" ayarı ise genellenmedi: questions setindeki %97,4, ayar setine uyumun bir parçası. Holdout v2'deki gerçek oran %50 civarında, 206 etiketi düzeltilirse %60. Kalan gürültünün hiçbiri yanlış bilgi değil: madde doğru, yalnızca gereksiz.
+
+---
+
 # 5. ölçüm — takvim ifadeleri tanımlandıktan sonra (2026-11-22, commit cda1df7)
 
 4. ölçümdeki gürültünün 9/10'u "geçen ay takvim ayı olarak alındı" maddesiydi. "Kurallar" bölümüne takvim ifadelerinin tanımı eklendi: "geçen ay", "bu ay", "geçen yıl" ve "bu yıl". Tanımın yanında bunların Türkçedeki yerleşik anlamlar olduğu ve varsayım olarak yazılmayacağı da söylendi. Böylece bir önceki madde ("kullanıcı talimatları görmez") bu tanıma uygulanmıyor: ölçütün ilk sorusunun cevabı "hayır". Ciro tanımı ise bir iş kararı olarak yazılmaya devam ediyor.
