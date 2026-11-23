@@ -329,3 +329,62 @@ def test_pg_whole_row_reference_allowed_when_table_fully_open(pg, sql):
 ])
 def test_pg_whole_row_of_derived_table_with_allowed_columns_runs(pg, sql):
     assert len(run_sql(pg, sql, ALLOWED)) == 200
+
+
+# --- Veritabanı tarafında zorlama: gölge CTE (ayrıştırıcı atlanır, doğrudan execute) ------------------
+
+@pytest.fixture(scope="module")
+def customer_names(pg):
+    return set(pg._pg_query("SELECT DISTINCT name FROM customers", 5)["name"])
+
+
+def _leaks(pg, sql, names) -> bool:
+    """execute ya hata vermeli ya da sonuçta hiçbir müşteri adı geçmemeli."""
+    try:
+        df = pg.execute(sql, ALLOWED, 5, 1000)
+    except (UnsafeSQL, QueryError):
+        return False
+    text = df.to_csv(index=False)
+    return any(n in text for n in names)
+
+
+DB_SIDE = {**ROW_LEAKS,
+           "gizli sütun": "SELECT name FROM customers",
+           "yıldız": "SELECT * FROM customers",
+           "ONLY": "SELECT * FROM ONLY customers",
+           "şema adıyla": "SELECT name FROM public.customers",
+           "şema adıyla tüm satır": "SELECT c::text FROM public.customers c",
+           "kullanıcının aynı adlı CTE'si": "WITH customers AS (SELECT c AS r FROM customers c) SELECT r::text FROM customers",
+           "WITH RECURSIVE kılıfı": "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 2) "
+                                    "SELECT (SELECT string_agg(c::text, ',') FROM customers c) FROM r"}
+
+
+@pytest.mark.parametrize("sql", DB_SIDE.values(), ids=DB_SIDE.keys())
+def test_pg_database_layer_alone_never_returns_hidden_column(pg, customer_names, sql):
+    assert not _leaks(pg, sql, customer_names)
+
+
+def test_pg_shadow_returns_only_allowed_columns_for_whole_row(pg):
+    df = pg.execute("SELECT c::text AS r FROM customers c ORDER BY c.id", ALLOWED, 5, 3)
+    assert df["r"][0].count(",") == 1                      # (id, city): iki alan
+
+
+def test_pg_shadow_keeps_normal_queries_working(pg):
+    assert len(run_sql(pg, "SELECT city FROM public.customers", ALLOWED)) == 200     # şema adı yeniden yazıldı
+    df = run_sql(pg, "WITH t AS (SELECT city FROM customers) SELECT COUNT(*) AS n FROM t", ALLOWED)
+    assert df["n"][0] == 200
+    assert list(run_sql(pg, "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) "
+                            "SELECT n FROM r", ALLOWED)["n"]) == [1, 2, 3]
+
+
+def test_pg_no_shadow_when_table_fully_allowed_or_query_unqualified(pg):
+    assert pg._shadow("SELECT name FROM customers", FULL_CUSTOMERS | {"orders": []}) == \
+        ("SELECT name FROM customers", "")
+    sql, prefix = pg._shadow("SELECT city FROM customers", ALLOWED)
+    assert sql == "SELECT city FROM customers"              # modelin metni değişmez
+    assert prefix.startswith('WITH "customers" AS NOT MATERIALIZED (SELECT "id", "city" FROM "public"."customers")')
+
+
+def test_pg_qualified_table_with_same_named_user_cte_rejected(pg):
+    with pytest.raises(UnsafeSQL):
+        pg.execute("WITH customers AS (SELECT 1 AS id) SELECT * FROM public.customers", ALLOWED, 5, 10)

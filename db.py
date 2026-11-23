@@ -276,8 +276,56 @@ class Database:
         """Doğrulanmış (validate_sql + check_access) bir SELECT'i çalıştırır, en fazla max_rows satır."""
         if self.kind == "sqlite":
             return self._sqlite_execute(f"SELECT * FROM ({sql}) LIMIT {int(max_rows)}", allowed, timeout)
-        return self._pg_query(f"SELECT * FROM ({sql}) AS q LIMIT {int(max_rows)}", timeout,
+        inner, shadows = (self._shadow(sql, allowed) if allowed is not None else (sql, ""))
+        return self._pg_query(f"{shadows}SELECT * FROM ({inner}) AS q LIMIT {int(max_rows)}", timeout,
                               check_plan=True, allowed=allowed)
+
+    def _shadow(self, sql: str, allowed: dict[str, list[str]]) -> tuple[str, str]:
+        """PostgreSQL'de gizli sütunu olan her izinli tabloyu, yalnızca izinli sütunlarını taşıyan bir
+        CTE ile gölgeler: WITH customers AS NOT MATERIALIZED (SELECT id, city FROM public.customers).
+
+        Kullanıcının sorgusu bu WITH'in altında alt sorgu olarak durur; customers adı (ve takma adı,
+        tüm satır referansı c, c::text, json_agg(c)...) artık gölgeye çözülür. Böylece ayrıştırıcı bir
+        şeyi kaçırsa bile veritabanı gizli sütunu döndüremez. Kullanıcının kendi WITH'i, WITH RECURSIVE'i
+        ve aynı adlı CTE'si iç kapsamda kalır; PostgreSQL'in ad çözümü dıştaki gölgeyi görür.
+        NOT MATERIALIZED: CTE sorguya gömülür, indeksler kullanılır.
+
+        Şema adıyla yazılmış tablo (public.customers) gölgeyi atlar: şema adı silinir. Kullanıcı aynı
+        adla bir CTE de tanımladıysa silmek anlamı değiştirir: o durumda reddedilir.
+        Dönüş: (çalıştırılacak kullanıcı sorgusu, "WITH ... " öneki ya da "").
+        """
+        ok = _normalize(allowed)
+        shadows = {}
+        for table, cols in self.columns().items():
+            keep = [c for c in cols if c.lower() in ok.get(table.lower(), set())]
+            if keep and len(keep) < len(cols):
+                shadows[table] = keep
+        if not shadows:
+            return sql, ""
+        sql = self._unqualify(sql, {t.lower() for t in shadows})
+        schema = self._q(self.schema)
+        ctes = ", ".join(
+            f"{self._q(t)} AS NOT MATERIALIZED (SELECT {', '.join(self._q(c) for c in cols)} "
+            f"FROM {schema}.{self._q(t)})" for t, cols in shadows.items())
+        return sql, f"WITH {ctes} "
+
+    def _unqualify(self, sql: str, shadowed: set[str]) -> str:
+        """public.customers -> customers (gölgelenen tablolar için), sqlglot AST'si üzerinde."""
+        import sqlglot
+        from sqlglot import exp
+
+        tree = sqlglot.parse_one(sql, dialect="postgres")
+        qualified = [t for t in tree.find_all(exp.Table)
+                     if t.name.lower() in shadowed and (t.args.get("db") or t.args.get("catalog"))]
+        if not qualified:
+            return sql  # yeniden yazmaya gerek yok: modelin metni olduğu gibi çalışır
+        ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+        for table in qualified:
+            if table.args.get("catalog") or table.name.lower() in ctes or \
+                    (table.db or "").lower() != (self.schema or "").lower():
+                raise UnsafeSQL("err_denied", names=[table.sql(dialect="postgres")])
+            table.set("db", None)
+        return tree.sql(dialect="postgres")
 
     def write_privileges(self) -> list[str]:
         """Bağlı kullanıcının veri/şema değiştirme yetkileri (boş liste = salt-okunur).
