@@ -173,6 +173,32 @@ FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex)\b",
     re.IGNORECASE,
 )
+# PostgreSQL'e özgü ek komutlar. "set", "comment", "do", "execute" gibi sık sütun adı olabilen
+# kelimeler bilerek yok: tek ifade + SELECT ile başlama kuralı ve salt-okunur transaction onları kapsar.
+FORBIDDEN_POSTGRES = re.compile(
+    r"\b(into|copy|truncate|grant|revoke|call|merge|lock|listen|notify|refresh|prepare|"
+    r"deallocate|discard|cluster|security|import)\b",
+    re.IGNORECASE,
+)
+
+# PostgreSQL'de sqlglot'un tanımadığı (Anonymous) fonksiyonlardan yalnızca bunlar serbest.
+# pg_read_file, set_config, current_setting, dblink, query_to_xml... gibi her şey reddedilir.
+SAFE_POSTGRES_FUNCTIONS = {
+    "age", "make_date", "make_time", "make_timestamp", "make_interval", "date_part", "date_bin",
+    "to_date", "to_timestamp", "to_number", "justify_days", "justify_hours", "justify_interval",
+    "isfinite", "initcap", "btrim", "ltrim", "rtrim", "lpad", "rpad", "translate", "starts_with",
+    "regexp_replace", "regexp_match", "regexp_matches", "string_to_array", "array_to_string",
+    "array_length", "cardinality", "unnest", "width_bucket", "trunc", "div", "mod", "sign", "ceiling",
+    "floor", "ln", "log", "exp", "power", "sqrt", "cbrt", "random", "pi", "stddev", "stddev_pop",
+    "stddev_samp", "variance", "var_pop", "var_samp", "corr", "covar_pop", "covar_samp", "mode",
+    "percentile_disc", "bool_and", "bool_or", "every", "bit_and", "bit_or", "ntile", "cume_dist",
+    "percent_rank", "first_value", "last_value", "nth_value", "lead", "lag", "row_number", "rank",
+    "dense_rank", "num_nonnulls", "num_nulls", "octet_length", "char_length", "character_length",
+    "md5", "reverse", "repeat", "left", "right", "position", "strpos", "format", "concat_ws",
+}
+# sqlglot'un tanıdığı ama oturum/sunucu bilgisi sızdıran fonksiyonlar (current_user, version()...).
+UNSAFE_TYPED_FUNCTIONS = {"CurrentUser", "SessionUser", "CurrentSchema", "CurrentDatabase",
+                          "CurrentVersion", "CurrentRole", "CurrentCatalog", "CurrentSchemas"}
 
 
 # İzin listesi: {"tablo": ["sütun", ...]}. None = her şeye izin (değerlendirme ve testler için).
@@ -234,7 +260,7 @@ def get_schema(db: DB, allowed: Allowed | None = None,
     return as_db(db).schema_text(allowed, value_columns, value_hint=_value_hint)
 
 
-def validate_sql(sql: str) -> str:
+def validate_sql(sql: str, dialect: str = "sqlite") -> str:
     """LLM çıktısına güvenme: yalnızca tek bir salt-okunur sorguya izin ver."""
     cleaned = re.sub(r"--[^\n]*|/\*.*?\*/", " ", sql, flags=re.DOTALL).strip().rstrip(";").strip()
     if not cleaned:
@@ -245,7 +271,8 @@ def validate_sql(sql: str) -> str:
         raise UnsafeSQL("err_select_only")
     # Metin sabitlerinin içindeki kelimeler yanlış alarm vermesin
     without_strings = re.sub(r"'(?:[^']|'')*'", "''", cleaned)
-    if FORBIDDEN.search(without_strings):
+    if FORBIDDEN.search(without_strings) or (
+            dialect == "postgres" and FORBIDDEN_POSTGRES.search(without_strings)):
         raise UnsafeSQL("err_modifies")
     return cleaned
 
@@ -263,7 +290,7 @@ def _find_source(scope, alias: str):
 
 
 def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
-                 dialect: str = "sqlite") -> None:
+                 dialect: str = "sqlite", db_schema: str | None = None) -> None:
     """SQL'i ayrıştırıp (sqlglot) izin listesi dışında bir tablo/sütuna erişiyorsa reddeder.
 
     Bu, çalıştırmadan ÖNCEKİ katmandır ve hangi sütunun sorun olduğunu açıkça söyler.
@@ -272,10 +299,13 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
 
     schema: veritabanındaki gerçek tablolar ve TÜM sütunları (list_columns çıktısı).
     dialect: sqlglot dialect'i ("sqlite" | "postgres"), veritabanı türüne göre.
+    db_schema: PostgreSQL'de izinli tek şema (ör. public). Başka şemadaki tablolar
+    (pg_catalog, information_schema, diğer şemalar) ve izin listesi dışındaki
+    fonksiyonlar reddedilir: PostgreSQL'de yetkilendirici olmadığı için bu kontrol şart.
     """
     import sqlglot
     from sqlglot import exp
-    from sqlglot.errors import ParseError
+    from sqlglot.errors import OptimizeError, ParseError
     from sqlglot.optimizer.qualify import qualify
     from sqlglot.optimizer.scope import traverse_scope
 
@@ -288,6 +318,19 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
 
     denied: set[str] = set()
     stars: set[str] = set()  # gizli sütunlu tabloda * kullanımı; mesajı dile göre ayrı kurulur
+    funcs: set[str] = set()  # izin verilmeyen fonksiyonlar (yalnızca PostgreSQL)
+
+    if dialect == "postgres":
+        # Şema: yalnızca adı verilen şema; katalog (veritabanı.şema.tablo) hiç olmaz.
+        for table in tree.find_all(exp.Table):
+            if table.catalog or (table.db and table.db.lower() != (db_schema or "").lower()):
+                denied.add(table.sql(dialect=dialect))
+        for fn in tree.find_all(exp.Func):
+            if isinstance(fn, exp.Anonymous):
+                if fn.name.lower() not in SAFE_POSTGRES_FUNCTIONS:
+                    funcs.add(fn.name.lower())
+            elif type(fn).__name__ in UNSAFE_TYPED_FUNCTIONS:
+                funcs.add(fn.sql_name().lower())
 
     # 1) SELECT * ve t.*: gizli sütunu olan bir tabloda yıldız kullanılamaz.
     #    (Yıldız genişletilmeden önce kontrol edilir ki hata mesajı anlaşılır olsun.)
@@ -312,9 +355,20 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
     # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
     #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
     typed = {t: {c: "TEXT" for c in cols} for t, cols in schema.items()}  # sqlglot {tablo: {sütun: tür}} ister
-    qualified = qualify(tree.copy(), schema=typed, dialect=dialect,
-                        expand_stars=True, validate_qualify_columns=False,
-                        quote_identifiers=False)
+    try:
+        qualified = qualify(tree.copy(), schema=typed, dialect=dialect,
+                            expand_stars=True, validate_qualify_columns=False,
+                            quote_identifiers=False)
+    except OptimizeError as exc:
+        # Şemada olmayan bir kaynağa (ör. sistem kataloğu) bağlı sütun çözülemedi. O kaynağı
+        # adıyla reddet; hepsi izinliyse ayrıştırma hatası say. Her iki durumda da çalıştırılmaz.
+        ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+        unknown = {t.sql(dialect=dialect) for t in tree.find_all(exp.Table)
+                   if t.name and t.name.lower() not in ok and t.name.lower() not in ctes}
+        if denied or stars or funcs or unknown:
+            raise UnsafeSQL("err_denied", names=sorted(denied | unknown), stars=sorted(stars),
+                            funcs=sorted(funcs)) from exc
+        raise SQLParseError("err_parse", detail=str(exc)) from exc
 
     for scope in traverse_scope(qualified):
         # Okunan her gerçek tablo izinli olmalı. Aynı adı taşıyan bir CTE gerçek tablo
@@ -342,8 +396,8 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                         if name in real[table] and name not in ok.get(table, set()):
                             denied.add(f"{src.name}.{col.name}")
 
-    if denied or stars:
-        raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars))
+    if denied or stars or funcs:
+        raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars), funcs=sorted(funcs))
 
 
 def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str],
@@ -382,9 +436,10 @@ def run_sql(db: DB, sql: str, allowed: Allowed | None = None,
     """Savunma katmanları: validate_sql (regex) -> check_access (ayrıştırıcı, izin listesi)
     -> veritabanı katmanı (SQLite: yetkilendirici, salt-okunur bağlantı, süre sınırı)."""
     database = as_db(db)
-    safe = validate_sql(sql)
+    safe = validate_sql(sql, dialect=database.dialect)
     if allowed is not None:
-        check_access(safe, allowed, database.columns(), dialect=database.dialect)
+        check_access(safe, allowed, database.columns(), dialect=database.dialect,
+                     db_schema=database.schema)
     return database.execute(safe, allowed, timeout, MAX_ROWS)
 
 

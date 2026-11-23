@@ -35,10 +35,17 @@ def external_database(url: str, schema: str | None) -> Database:
 # (shop.db / shop_en.db; tablo ve sütun adları aynı). Dış veritabanında dil yalnızca arayüzü değiştirir.
 DB_URL = os.getenv("NL2SQL_DATABASE_URL", "").strip()
 EXTERNAL = bool(DB_URL)
+@st.cache_resource(show_spinner=False)
+def write_privileges(url: str, schema: str | None) -> list[str]:
+    """Açılışta bir kez: bağlı kullanıcı veri değiştirebiliyor mu? (Boş liste = salt-okunur.)"""
+    return external_database(url, schema).write_privileges()
+
+
 if EXTERNAL:
     try:
         DB = external_database(DB_URL, os.getenv("NL2SQL_DB_SCHEMA") or None)
         COLUMNS = list_columns(DB)
+        WRITE_RISK = write_privileges(DB_URL, os.getenv("NL2SQL_DB_SCHEMA") or None)
     except DatabaseError as exc:
         st.error(exc.localized(lang))
         st.stop()
@@ -107,6 +114,9 @@ st.title(t(lang, "title"))
 st.caption(t(lang, "subtitle"))
 if EXTERNAL:
     st.caption(t(lang, "external_db", kind=DB.kind))
+    if WRITE_RISK:  # belirgin olsun: kırmızı kutu, her sayfada
+        shown = ", ".join(WRITE_RISK[:4]) + (f" +{len(WRITE_RISK) - 4}" if len(WRITE_RISK) > 4 else "")
+        st.error(t(lang, "write_warning", items=shown), icon=":material/warning:")
 else:
     st.caption(t(lang, "data_date", today=TODAY))
 

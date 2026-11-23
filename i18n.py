@@ -46,6 +46,9 @@ TEXTS: dict[str, dict[str, object]] = {
                           "left panel to continue, or try again tomorrow."),
         "start_hint": "To start, select the columns the model can see in the left panel.",
         "external_db": "Connected to your own database ({kind}), set with NL2SQL_DATABASE_URL.",
+        "write_warning": ("The database user can modify data ({items}). Queries still run in read-only "
+                          "transactions, but you should connect with a read-only user: see "
+                          "\"Connect your own database\" in the README."),
         "question_label": "Your question",
         "submit": "Send",
         "generating": "Preparing the query...",
@@ -77,6 +80,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_denied": "The query tried to access tables/columns that are not allowed: {items}",
         "err_star": "{table}.* (* cannot be used on a table with hidden columns)",
         "err_op": "operation {op}",
+        "err_func": "function {name}",
         "err_timeout": ("The query was stopped because it did not finish within {seconds} seconds. "
                         "Try narrowing the question (e.g. add a date range)."),
         "err_db_connect": ("Could not connect to the database. Check NL2SQL_DATABASE_URL and that the "
@@ -122,6 +126,9 @@ TEXTS: dict[str, dict[str, object]] = {
                           "anahtarını girerek devam edebilir ya da yarın tekrar deneyebilirsin."),
         "start_hint": "Başlamak için soldaki panelden modelin görebileceği sütunları seç.",
         "external_db": "Kendi veritabanına bağlısın ({kind}); NL2SQL_DATABASE_URL ile ayarlandı.",
+        "write_warning": ("Veritabanı kullanıcısının veri değiştirme yetkisi var ({items}). Sorgular yine "
+                          "salt-okunur transaction'da çalışır ama salt-okunur bir kullanıcıyla bağlanmalısın: "
+                          "README'deki \"Connect your own database\" bölümüne bak."),
         "question_label": "Sorun",
         "submit": "Gönder",
         "generating": "Sorgu hazırlanıyor...",
@@ -152,6 +159,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_denied": "Sorgu izin verilmeyen tablo/sütunlara erişmeye çalıştı: {items}",
         "err_star": "{table}.* (gizli sütun içeren tabloda * kullanılamaz)",
         "err_op": "işlem {op}",
+        "err_func": "fonksiyon {name}",
         "err_timeout": ("Sorgu {seconds} saniyede bitmediği için durduruldu. "
                         "Soruyu daraltmayı dene (ör. tarih aralığı ekle)."),
         "err_db_connect": ("Veritabanına bağlanılamadı. NL2SQL_DATABASE_URL'yi ve veritabanının çalıştığını "
@@ -175,5 +183,6 @@ def error_text(lang: str, key: str, params: dict) -> str:
         items = list(params.get("names", []))
         items += [t(lang, "err_star", table=s) for s in params.get("stars", [])]
         items += [t(lang, "err_op", op=o) for o in params.get("ops", [])]
+        items += [t(lang, "err_func", name=f) for f in params.get("funcs", [])]
         return t(lang, key, items=", ".join(sorted(items)))
     return t(lang, key, **params)

@@ -448,3 +448,10 @@ def test_successful_query_does_not_ask_for_retry(db, monkeypatch):
     asks = []
     nl2sql.answer("?", db, today="2026-11-20", allow_retry=lambda: asks.append(1) or True)
     assert asks == []
+
+
+def test_unresolvable_correlated_source_is_rejected_not_crashing(db):
+    # sqlglot şemada olmayan kaynağa bağlı sütunu çözemez (OptimizeError); genel hata değil, ret olmalı
+    with pytest.raises(UnsafeSQL, match="sqlite_master"):
+        check_access("SELECT city FROM customers WHERE id IN (SELECT rootpage FROM sqlite_master)",
+                     ALLOWED, list_columns(db))

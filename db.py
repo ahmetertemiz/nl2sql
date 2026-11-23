@@ -90,8 +90,11 @@ class Database:
         secrets = (url.strip(), parsed.password, parsed.username, parsed.host,
                    *(str(v) for v in parsed.query.values()))
         try:
+            # default_transaction_read_only: her sorgu ayrıca SET TRANSACTION READ ONLY ile açılır;
+            # bu, bağlantı düzeyinde ikinci bir emniyet.
             engine = create_engine(parsed, hide_parameters=True, pool_pre_ping=True,
-                                   connect_args={"connect_timeout": 10})
+                                   connect_args={"connect_timeout": 10,
+                                                 "options": "-c default_transaction_read_only=on"})
         except Exception:
             raise DatabaseError("err_db_connect") from None
         db = cls(engine, "postgresql", secrets=tuple(str(s) for s in secrets if s), schema=schema)
@@ -273,7 +276,63 @@ class Database:
         """Doğrulanmış (validate_sql + check_access) bir SELECT'i çalıştırır, en fazla max_rows satır."""
         if self.kind == "sqlite":
             return self._sqlite_execute(f"SELECT * FROM ({sql}) LIMIT {int(max_rows)}", allowed, timeout)
-        return self._pg_query(f"SELECT * FROM ({sql}) AS q LIMIT {int(max_rows)}", timeout)
+        return self._pg_query(f"SELECT * FROM ({sql}) AS q LIMIT {int(max_rows)}", timeout,
+                              check_plan=True, allowed=allowed)
+
+    def write_privileges(self) -> list[str]:
+        """Bağlı kullanıcının veri/şema değiştirme yetkileri (boş liste = salt-okunur).
+
+        SQLite dosyası her zaman mode=ro açıldığı için yazma mümkün değil: boş liste.
+        """
+        if self.kind == "sqlite":
+            return []
+        schema = self.schema
+        found: list[str] = []
+        superuser = self._pg_query("SELECT rolsuper FROM pg_roles WHERE rolname = current_user", 5)
+        if len(superuser) and bool(superuser.iloc[0, 0]):
+            found.append("superuser")
+        tables = self._pg_query(
+            "SELECT c.relname, p.priv FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "CROSS JOIN (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE')) AS p(priv) "
+            f"WHERE n.nspname = {_literal(schema)} AND c.relkind IN ('r', 'p') "
+            "AND has_table_privilege(c.oid, p.priv) ORDER BY 1, 2", 5)
+        found += [f"{priv} {table}" for table, priv in tables.itertuples(index=False)]
+        flags = self._pg_query(
+            f"SELECT has_schema_privilege({_literal(schema)}, 'CREATE'), "
+            "has_database_privilege(current_database(), 'CREATE')", 5)
+        if bool(flags.iloc[0, 0]):
+            found.append(f"CREATE in schema {schema}")
+        if bool(flags.iloc[0, 1]):
+            found.append("CREATE in database")
+        return found
+
+    def _check_plan(self, plan, allowed) -> None:
+        """EXPLAIN çıktısındaki gerçek tablo okumalarını izin listesiyle karşılaştır.
+
+        SQLite yetkilendiricisinin yerini tam tutmaz (sütun düzeyinde değil, tablo düzeyinde),
+        ama tabloyu PostgreSQL'in kendisi çözer: ayrıştırıcının kaçırdığı bir tablo erişimi,
+        başka şemadaki ya da sistem kataloğundaki bir tablo burada yakalanır.
+        """
+        ok = _normalize(allowed) if allowed is not None else None
+        denied: set[str] = set()
+
+        def walk(node):
+            if isinstance(node, dict):
+                rel = node.get("Relation Name")
+                if rel:
+                    schema = node.get("Schema", "")
+                    if schema.lower() != (self.schema or "").lower() or (
+                            ok is not None and rel.lower() not in ok):
+                        denied.add(f"{schema}.{rel}")
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(plan)
+        if denied:
+            raise UnsafeSQL("err_denied", names=sorted(denied))
 
     def _sqlite_execute(self, sql: str, allowed, timeout: float) -> pd.DataFrame:
         from nl2sql import _authorizer  # yetkilendirici SQLite'a özgü; nl2sql'de belgelenmiş durur
@@ -299,22 +358,45 @@ class Database:
                     raise QueryTimeout("err_timeout", seconds=f"{timeout:g}") from exc
                 raise
 
-    def _pg_query(self, sql: str, timeout: float) -> pd.DataFrame:
+    def _pg_query(self, sql: str, timeout: float, check_plan: bool = False,
+                  allowed: dict[str, list[str]] | None = None) -> pd.DataFrame:
+        """Her sorgu kendi salt-okunur transaction'ında, süre sınırıyla çalışır ve geri alınır.
+
+        check_plan: önce EXPLAIN ile okunacak tabloları denetle (model sorguları için).
+        """
+        import psycopg
+
         # Ham psycopg imleci: SQLAlchemy text() ":ad" kalıplarını parametre sanar, sürücüye
         # parametresiz verilen sorguda ise "%" (LIKE 'a%') olduğu gibi kalır.
+        schema = self.schema
         with self._connection() as con:
             raw = con.connection.driver_connection
             try:
-                raw.rollback()  # temiz bir transaction ile başla
+                raw.rollback()  # temiz bir transaction ile başla: SET TRANSACTION ilk komut olmalı
                 with raw.cursor() as cur:
+                    cur.execute("SET TRANSACTION READ ONLY")
+                    cur.execute(f"SET LOCAL statement_timeout = {max(1, int(timeout * 1000))}")
+                    cur.execute(f"SET LOCAL search_path TO {self._q(schema)}")
+                    if check_plan:
+                        cur.execute(f"EXPLAIN (VERBOSE, FORMAT JSON) {sql}")
+                        self._check_plan(cur.fetchone()[0], allowed)
                     cur.execute(sql)
                     cols = [d.name for d in cur.description]
                     rows = cur.fetchall()
                 return pd.DataFrame(rows, columns=cols)
+            except UnsafeSQL:
+                raise
+            except psycopg.errors.QueryCanceled:
+                raise QueryTimeout("err_timeout", seconds=f"{timeout:g}") from None
             except Exception as exc:
                 raise self._wrap(exc) from None
             finally:
                 raw.rollback()
+
+
+def _literal(value: str) -> str:
+    """Yalnızca kendi ürettiğimiz sorgularda (şema adı) kullanılan metin sabiti."""
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _type_name(sa_type) -> str:
