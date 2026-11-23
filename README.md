@@ -1,5 +1,7 @@
 # Ask Your Data in Plain Language
 
+**[Live demo](https://nl2sql-test.streamlit.app/)**
+
 A text-to-SQL tool. You ask a question in plain language (English or Turkish), Claude turns it into a SQLite query, the query runs read-only on a sample e-commerce database behind a column-level allowlist, and the result is shown as a table and a chart.
 
 *Türkçe özet [aşağıda](#türkçe).*
