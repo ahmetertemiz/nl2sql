@@ -82,6 +82,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_op": "operation {op}",
         "err_func": "function {name}",
         "err_row": "{table} as a whole row (the table has hidden columns)",
+        "err_alias_list": "{table} with a column alias list (the table has hidden columns)",
         "err_timeout": ("The query was stopped because it did not finish within {seconds} seconds. "
                         "Try narrowing the question (e.g. add a date range)."),
         "err_db_connect": ("Could not connect to the database. Check NL2SQL_DATABASE_URL and that the "
@@ -163,6 +164,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_op": "işlem {op}",
         "err_func": "fonksiyon {name}",
         "err_row": "{table} satırın tamamı olarak (tabloda gizli sütun var)",
+        "err_alias_list": "{table} sütun takma ad listesiyle (tabloda gizli sütun var)",
         "err_timeout": ("Sorgu {seconds} saniyede bitmediği için durduruldu. "
                         "Soruyu daraltmayı dene (ör. tarih aralığı ekle)."),
         "err_db_connect": ("Veritabanına bağlanılamadı. NL2SQL_DATABASE_URL'yi ve veritabanının çalıştığını "
@@ -189,5 +191,6 @@ def error_text(lang: str, key: str, params: dict) -> str:
         items += [t(lang, "err_op", op=o) for o in params.get("ops", [])]
         items += [t(lang, "err_func", name=f) for f in params.get("funcs", [])]
         items += [t(lang, "err_row", table=r) for r in params.get("rows", [])]
+        items += [t(lang, "err_alias_list", table=a) for a in params.get("aliased", [])]
         return t(lang, key, items=", ".join(sorted(items)))
     return t(lang, key, **params)

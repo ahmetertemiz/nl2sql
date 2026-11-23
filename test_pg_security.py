@@ -388,3 +388,55 @@ def test_pg_no_shadow_when_table_fully_allowed_or_query_unqualified(pg):
 def test_pg_qualified_table_with_same_named_user_cte_rejected(pg):
     with pytest.raises(UnsafeSQL):
         pg.execute("WITH customers AS (SELECT 1 AS id) SELECT * FROM public.customers", ALLOWED, 5, 10)
+
+
+# --- Aynı sınıfta başka kaçış yolları (bileşik tür, satır karşılaştırması, tablo fonksiyonları, ONLY,
+#     TABLESAMPLE, sütun takma ad listesi...). Her biri iki katmanda ayrı ayrı denetlenir. ---------------
+ESCAPES = {
+    "ROW(c.*)": "SELECT ROW(c.*) FROM customers c",
+    "(c).*": "SELECT (c).* FROM customers c",
+    "satır karşılaştırması": "SELECT count(*) FROM customers c WHERE c = c",
+    "satır metninde arama (kahin)": "SELECT count(*) FROM customers c WHERE c::text LIKE '%Yılmaz%'",
+    "tablo adıyla alan (kahin)": "SELECT count(*) FROM customers WHERE (customers).name > 'M'",
+    "ROW() = ROW()": "SELECT count(*) FROM customers c WHERE ROW(c.id, c.name) = ROW(1, 'x')",
+    "IS NOT NULL": "SELECT count(*) FROM customers c WHERE c IS NOT NULL",
+    "count(DISTINCT c)": "SELECT count(DISTINCT c) FROM customers c",
+    "row_to_json": "SELECT row_to_json(c) FROM customers c",
+    "to_jsonb eksi alan": "SELECT to_jsonb(c) - 'name' FROM customers c",
+    "string_agg": "SELECT string_agg(c::text, ';') FROM customers c",
+    "sütun takma ad listesi": "SELECT b FROM customers AS c(a, b)",
+    "takma ad listesiyle izinli ad": "SELECT city FROM customers AS c(id, city)",
+    "takma ad listesi + nitelikli": "SELECT c.city FROM customers AS c(id, city) WHERE c.city LIKE 'A%'",
+    "takma ad listesi + yıldız": "SELECT x.* FROM customers AS x(a, b, cc)",
+    "LATERAL alan": "SELECT s.x FROM customers c, LATERAL (SELECT c.name AS x) s",
+    "LATERAL tüm satır": "SELECT s.x FROM customers c, LATERAL (SELECT c::text AS x) s",
+    "unnest(ARRAY(alt sorgu))": "SELECT * FROM unnest(ARRAY(SELECT c::text FROM customers c)) u",
+    "skaler alt sorgu": "SELECT (SELECT c::text FROM customers c LIMIT 1) AS r",
+    "TABLE komutu": "WITH x AS (TABLE customers) SELECT * FROM x",
+    "şema adıyla alan": "SELECT (public.customers).name FROM public.customers",
+    "şema adıyla satır": "SELECT public.customers FROM public.customers",
+    "ONLY": "SELECT c::text FROM ONLY customers c",
+    "TABLESAMPLE": "SELECT c::text FROM customers c TABLESAMPLE SYSTEM (100)",
+    "DISTINCT ON": "SELECT DISTINCT ON (name) city FROM customers",
+    "satır türü (json_populate_record)": "SELECT (json_populate_record(null::customers, '{}')).*",
+    "NATURAL JOIN": "SELECT * FROM customers NATURAL JOIN customers c2",
+    "USING": "SELECT city FROM customers JOIN customers c2 USING (name)",
+    "GROUP BY gizli": "SELECT city FROM customers GROUP BY name, city",
+}
+
+
+@pytest.mark.parametrize("sql", ESCAPES.values(), ids=ESCAPES.keys())
+def test_pg_escape_rejected_by_parser_alone(pg, sql):
+    from errors import SQLParseError
+    with pytest.raises((UnsafeSQL, SQLParseError)):
+        check_access(sql, ALLOWED, list_columns(pg), dialect="postgres", db_schema="public")
+
+
+@pytest.mark.parametrize("sql", ESCAPES.values(), ids=ESCAPES.keys())
+def test_pg_escape_blocked_by_database_layer_alone(pg, customer_names, sql):
+    assert not _leaks(pg, sql, customer_names)
+
+
+def test_pg_column_alias_list_allowed_when_table_fully_open(pg):
+    df = run_sql(pg, "SELECT nm FROM customers AS c(i, nm) ORDER BY i LIMIT 1", FULL_CUSTOMERS)
+    assert df["nm"][0] and df["nm"][0] != "Antalya"

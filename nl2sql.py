@@ -335,6 +335,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
     stars: set[str] = set()  # gizli sütunlu tabloda * kullanımı; mesajı dile göre ayrı kurulur
     funcs: set[str] = set()  # izin verilmeyen fonksiyonlar (yalnızca PostgreSQL)
     rows: set[str] = set()   # gizli sütunlu tabloda tüm satır referansı (yalnızca PostgreSQL)
+    aliased: set[str] = set()  # gizli sütunlu tabloda sütun takma ad listesi (yalnızca PostgreSQL)
 
     if dialect == "postgres":
         # Şema: yalnızca adı verilen şema; katalog (veritabanı.şema.tablo) hiç olmaz.
@@ -379,7 +380,8 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                     continue
                 if isinstance(node.this, exp.Star):        # c.* ifadenin içinde: (c.*)::text, f(c.*)
                     src, bucket = _find_source(scope, node.table), stars
-                elif not node.table:                        # c, customers, (c).ad
+                elif not node.table or node.table.lower() == (db_schema or "").lower():
+                    # c, customers, (c).ad ve şema adıyla public.customers, (public.customers).ad
                     src, bucket = _find_source(scope, node.name), rows
                 else:
                     continue
@@ -387,6 +389,13 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                     table = src.name.lower()
                     if ok.get(table) != real[table]:
                         bucket.add(src.name)
+        # Sütun takma ad listesi sütunları SIRAYLA yeniden adlandırır: customers AS c(id, city) içinde
+        # "city" aslında ikinci sütun (name). Gizli sütunlu tabloda izin verilmez.
+        for table in tree.find_all(exp.Table):
+            alias = table.args.get("alias")
+            name = table.name.lower()
+            if alias is not None and alias.columns and name in real and ok.get(name) != real[name]:
+                aliased.add(table.name)
 
     # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
     #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
@@ -401,9 +410,9 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
         ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
         unknown = {t.sql(dialect=dialect) for t in tree.find_all(exp.Table)
                    if t.name and t.name.lower() not in ok and t.name.lower() not in ctes}
-        if denied or stars or funcs or rows or unknown:
+        if denied or stars or funcs or rows or aliased or unknown:
             raise UnsafeSQL("err_denied", names=sorted(denied | unknown), stars=sorted(stars),
-                            funcs=sorted(funcs), rows=sorted(rows)) from exc
+                            funcs=sorted(funcs), rows=sorted(rows), aliased=sorted(aliased)) from exc
         raise SQLParseError("err_parse", detail=str(exc)) from exc
 
     for scope in traverse_scope(qualified):
@@ -422,6 +431,10 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                 src = _find_source(scope, col.table)
                 if isinstance(src, exp.Table) and src.name.lower() in real:
                     table = src.name.lower()
+                    alias = src.args.get("alias")
+                    renamed = {c.name.lower() for c in alias.columns} if alias is not None else set()
+                    if name in renamed and ok.get(table) == real[table]:
+                        continue  # tamamen açık tabloda takma ad listesindeki ad (gizli tabloda zaten reddedildi)
                     if name not in ok.get(table, set()):
                         denied.add(f"{src.name}.{col.name}")
             elif name not in outputs:
@@ -432,9 +445,9 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                         if name in real[table] and name not in ok.get(table, set()):
                             denied.add(f"{src.name}.{col.name}")
 
-    if denied or stars or funcs or rows:
+    if denied or stars or funcs or rows or aliased:
         raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars), funcs=sorted(funcs),
-                        rows=sorted(rows))
+                        rows=sorted(rows), aliased=sorted(aliased))
 
 
 def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str],
