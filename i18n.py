@@ -86,6 +86,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_db_connect": ("Could not connect to the database. Check NL2SQL_DATABASE_URL and that the "
                            "database is running (details are hidden so the address is not shown)."),
         "err_db_url": "NL2SQL_DATABASE_URL is not a valid database address.",
+        "err_glossary": "The business glossary file ({name}) given in NL2SQL_GLOSSARY could not be read.",
         "err_db_unsupported": "Unsupported database type: {kind}. Supported: sqlite, postgresql.",
     },
     "tr": {
@@ -165,6 +166,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_db_connect": ("Veritabanına bağlanılamadı. NL2SQL_DATABASE_URL'yi ve veritabanının çalıştığını "
                            "kontrol et (adres görünmesin diye ayrıntı gösterilmiyor)."),
         "err_db_url": "NL2SQL_DATABASE_URL geçerli bir veritabanı adresi değil.",
+        "err_glossary": "NL2SQL_GLOSSARY ile verilen iş sözlüğü dosyası ({name}) okunamadı.",
         "err_db_unsupported": "Desteklenmeyen veritabanı türü: {kind}. Desteklenenler: sqlite, postgresql.",
     },
 }

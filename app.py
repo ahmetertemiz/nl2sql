@@ -1,6 +1,7 @@
 """Doğal dille SQL — Streamlit arayüzü. Çalıştır: streamlit run app.py"""
 import json
 import os
+from datetime import date
 
 import streamlit as st
 
@@ -8,11 +9,11 @@ import quota
 import seed_db
 from charts import make_chart
 from db import Database
-from errors import DatabaseError
+from errors import DatabaseError, LocalizedError
 from i18n import DEFAULT_LANG, LANGS, t
-from nl2sql import INTERPRET_MAX_ROWS, answer, format_sql, get_schema, interpret_result, list_columns
+from nl2sql import (INTERPRET_MAX_ROWS, answer, default_glossary, format_sql, get_schema, interpret_result,
+                    list_columns)
 
-TODAY = seed_db.TODAY.isoformat()  # örnek verinin bittiği gün; gerçek tarih değil (bkz. seed_db.py)
 # Ortak anahtarla günde en fazla kaç model çağrısı yapılabilir. 0 = sınırsız (yerel kullanım).
 DAILY_LIMIT = int(os.getenv("NL2SQL_DAILY_LIMIT", "0"))
 MAX_QUESTION_CHARS = 500
@@ -50,11 +51,20 @@ if EXTERNAL:
         st.error(exc.localized(lang))
         st.stop()
     EXAMPLES = []  # örnek sorular örnek veriye özgü
+    TODAY = date.today().isoformat()  # dış veritabanında gerçek tarih
 else:
     DB = seed_db.DB_PATHS[lang]
     if not DB.exists():
         seed_db.build(DB, lang=lang)
     COLUMNS = list_columns(DB)
+    TODAY = seed_db.TODAY.isoformat()  # örnek verinin bittiği gün; gerçek tarih değil (bkz. seed_db.py)
+
+# İş sözlüğü: NL2SQL_GLOSSARY ya da örnek veritabanının hazır sözlüğü. Dosya okunamıyorsa baştan söyle.
+try:
+    GLOSSARY = default_glossary(DB)
+except LocalizedError as exc:
+    st.error(exc.localized(lang))
+    st.stop()
 
 
 def set_all(on: bool) -> None:
@@ -165,7 +175,7 @@ if (submitted or st.session_state.pop("run_now", False)) and question:
         st.stop()
     with st.spinner(t(lang, "generating")):
         try:
-            result = answer(question, DB, today=TODAY, allowed=allowed,
+            result = answer(question, DB, today=TODAY, allowed=allowed, glossary=GLOSSARY,
                             value_columns=value_columns, api_key=user_key, lang=lang,
                             allow_retry=may_call_model)  # yeniden deneme de bir hak harcar
         except Exception as exc:

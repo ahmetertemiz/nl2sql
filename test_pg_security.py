@@ -236,8 +236,8 @@ def test_app_warns_when_user_can_write(monkeypatch, pg_url):
 def test_app_no_warning_for_readonly_user_and_question_uses_it(monkeypatch, pg_readonly_url):
     seen = []
 
-    def fake_answer(question, db_path, today, allowed=None, **_):
-        seen.append((type(db_path).__name__, allowed))
+    def fake_answer(question, db_path, today, allowed=None, glossary=None, **_):
+        seen.append((type(db_path).__name__, allowed, today, glossary))
         df = nl2sql.run_sql(db_path, "SELECT COUNT(*) AS n FROM customers", allowed)
         return {"sql": "SELECT 1", "explanation": "", "chart": "none", "x": None, "y": None,
                 "df": df, "error": None}
@@ -247,5 +247,8 @@ def test_app_no_warning_for_readonly_user_and_question_uses_it(monkeypatch, pg_r
     assert not at.exception and not at.error
     at.text_input(key="question").input("How many customers?")
     next(b for b in at.button if b.label == "Send").click().run()
+    from datetime import date
     assert seen and seen[0][0] == "Database"
+    assert seen[0][2] == date.today().isoformat()      # dış veritabanında gerçek tarih
+    assert seen[0][3] == ""                            # NL2SQL_GLOSSARY yok: örnek sözlük gönderilmez
     assert pd.DataFrame(at.dataframe[0].value)["n"][0] == 200

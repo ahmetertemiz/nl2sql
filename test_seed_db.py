@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 import seed_db
-from nl2sql import build_system_prompt, completed_status
+from nl2sql import build_system_prompt
 
 # Türkçe veritabanının tam dökümünün (şema + tüm satırlar) parmak izi. Değişirse evals/
 # altındaki referans SQL'lerin beklediği sayılar da değişir: bilerek yapılmadıysa hatadır.
@@ -63,16 +63,21 @@ def test_locale_lists_have_equal_lengths():
            [c for _, c, _ in en["products"]].count("Electronics")
 
 
-def test_completed_status_is_read_from_database(dbs, tmp_path):
-    assert completed_status(dbs[0]) == "tamamlandi"
-    assert completed_status(dbs[1]) == "completed"
-    empty = tmp_path / "empty.db"
-    sqlite3.connect(empty).close()
-    assert completed_status(empty) is None
+def test_each_demo_database_has_its_own_glossary_with_its_status_value(dbs):
+    """Ciro kuralının durum değeri prompt'a sabit yazılmaz: her örnek veritabanının sözlüğünde durur."""
+    from nl2sql import DEMO_GLOSSARIES, load_glossary
+
+    tr, en = load_glossary(DEMO_GLOSSARIES["shop.db"]), load_glossary(DEMO_GLOSSARIES["shop_en.db"])
+    assert "count only orders with status = 'tamamlandi' in revenue" in tr
+    assert "count only orders with status = 'completed' in revenue" in en
+    # sözlükteki değer veritabanında gerçekten var
+    for path, value in ((dbs[0], "tamamlandi"), (dbs[1], "completed")):
+        with sqlite3.connect(path) as con:
+            assert value in {r[0] for r in con.execute("SELECT DISTINCT status FROM orders")}
 
 
-def test_revenue_rule_uses_database_value():
-    assert "count only orders with status = 'completed' in revenue" in build_system_prompt("s", "t", "completed")
-    assert "status = 'tamamlandi'" in build_system_prompt("s", "t", "tamamlandi")
-    no_value = build_system_prompt("s", "t", None)
-    assert "count only completed orders in revenue" in no_value and "status = '" not in no_value
+def test_glossary_lines_go_into_rules_and_empty_glossary_adds_nothing():
+    with_rule = build_system_prompt("s", "t", "- Revenue = quantity * unit_price.")
+    assert "\n- Revenue = quantity * unit_price.\n- In questions such as" in with_rule
+    without = build_system_prompt("s", "t", "")
+    assert "Revenue" not in without and "applied as stated.)\n- In questions such as" in without

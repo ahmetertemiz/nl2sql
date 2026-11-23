@@ -25,7 +25,7 @@ MAX_DISTINCT_VALUES = 20   # bundan fazla farklı değeri olan sütun kategorik 
 MAX_VALUE_CHARS = 40       # tek bir değerin modele gönderilen en fazla uzunluğu
 VALUE_SCAN_TIMEOUT_S = 2.0 # büyük tablolarda değer taramasının üst süresi
 
-SYSTEM_PROMPT = """You are a data analyst. You translate the user's question into a SQLite query.
+SYSTEM_PROMPT = """You are a data analyst. You translate the user's question into a {dialect_name} query.
 
 Database schema:
 {schema}
@@ -33,14 +33,13 @@ Database schema:
 Rules:
 - Write only a single SELECT (or WITH ... SELECT) query. Never write a command that modifies data.
 - Use only the tables and columns in the schema; do not invent columns.
-- Dates are stored as 'YYYY-MM-DD' text; use the strftime / date functions. Today: {today}.
+- {date_rule}
 - Calendar expressions, in any language: "last month" / "geçen ay" (and their equivalents in other
   languages) = the whole previous calendar month; "this month" / "bu ay" = the current calendar month;
   "last year" / "geçen yıl" = the previous calendar year; "this year" / "bu yıl" = the current calendar
   year. These are the established meanings; the user does not expect another interpretation, so do
   not list them as assumptions. (Explicit ranges such as "last 30 days" are applied as stated.)
-- Revenue = quantity * unit_price. Unless asked otherwise, count only {revenue_orders} in revenue.
-- In questions such as "least sold", "fewer than X units" or "never ordered", do not lose rows whose
+{glossary}- In questions such as "least sold", "fewer than X units" or "never ordered", do not lose rows whose
   value is zero: start from the main table (e.g. FROM products, FROM customers), attach the transaction
   tables with LEFT JOIN, put date/status filters in a subquery or the ON clause instead of WHERE, and
   turn an empty total into 0 with COALESCE(..., 0).
@@ -71,6 +70,19 @@ Return only this JSON and nothing else:
 {{"sql": "...", "explanation": "what the query does, in 1-2 sentences",
   "assumptions": ["everything not explicit in the question that you decided; empty list if none"],
   "chart": "bar" | "line" | "none", "x": "x-axis column or null", "y": "y-axis column or null"}}"""
+
+# Veritabanı türüne göre: sorgu dili ve tarih kuralı. SQLite metni değişmedi (demo prompt'u aynı kalsın).
+DIALECT_NAMES = {"sqlite": "SQLite", "postgres": "PostgreSQL"}
+DATE_RULES = {
+    "sqlite": "Dates are stored as 'YYYY-MM-DD' text; use the strftime / date functions. Today: {today}.",
+    "postgres": ("Use PostgreSQL date functions (date_trunc, EXTRACT, to_char, INTERVAL arithmetic). "
+                 "Today: {today}; write it as DATE '{today}' and do not use CURRENT_DATE or now()."),
+}
+
+# İş sözlüğü (örnek veriye ya da kullanıcının veritabanına özgü kurallar: ciro tanımı, durum değerleri).
+# Prompt'ta "Rules" listesinin içine, eski ciro kuralının yerine girer.
+GLOSSARY_DIR = Path(__file__).parent / "glossaries"
+DEMO_GLOSSARIES = {"shop.db": GLOSSARY_DIR / "shop_tr.md", "shop_en.db": GLOSSARY_DIR / "shop_en.md"}
 
 INTERPRET_MAX_ROWS = 50  # yorum için modele gönderilen en fazla satır
 
@@ -480,35 +492,59 @@ def response_text(content) -> str:
     return "".join(block.text for block in content if block.type == "text")
 
 
-# "Tamamlandı" anlamına gelen durum değerleri; hangisinin kullanıldığı veritabanından okunur.
-COMPLETED_STATUSES = ("tamamlandi", "completed")
+def load_glossary(path: Path | str) -> str:
+    """Sözlük dosyasından modele gidecek kural satırları.
 
-
-def completed_status(db: DB) -> str | None:
-    """Veritabanındaki 'tamamlanmış sipariş' durum değeri (ör. 'tamamlandi' ya da 'completed').
-
-    Ciro kuralı prompt'a sabit bir değerle yazılmaz: Türkçe ve İngilizce veritabanı farklı
-    değerler kullanır. orders.status yoksa ya da tanınan bir değer yoksa None.
+    Yalnızca "- " ile başlayan satırlar ve onların iki boşlukla girintili devam satırları alınır;
+    başlıklar ve açıklamalar insanlar içindir. Dosya yoksa ya da okunamıyorsa LocalizedError.
     """
     try:
-        values = set(as_db(db).distinct_values("orders", "status", 100, VALUE_SCAN_TIMEOUT_S))
-    except Exception:
-        return None
-    return next((v for v in COMPLETED_STATUSES if v in values), None)
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        raise LocalizedError("err_glossary", name=Path(path).name) from None
+    lines, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("- "):
+            lines.append(line.rstrip())
+            inside = True
+        elif inside and line.startswith("  ") and line.strip():
+            lines.append(line.rstrip())
+        else:
+            inside = False
+    return "\n".join(lines)
 
 
-def build_system_prompt(schema: str, today: str, completed: str | None) -> str:
-    """Değer bulunamazsa kural yine durur, yalnızca sütun değeri yazılmaz."""
-    revenue_orders = (f"orders with status = '{completed}'" if completed
-                      else "completed orders")
-    return SYSTEM_PROMPT.format(schema=schema, today=today, revenue_orders=revenue_orders)
+def default_glossary(db: DB) -> str:
+    """NL2SQL_GLOSSARY verilmişse o dosya; yoksa örnek veritabanlarının hazır sözlüğü; yoksa boş.
+
+    Örnek veritabanı, seed_db'nin oluşturduğu dosyalardan biri (shop.db / shop_en.db) demektir.
+    """
+    env = os.getenv("NL2SQL_GLOSSARY", "").strip()
+    if env:
+        return load_glossary(env)
+    if not isinstance(db, Database):
+        import seed_db
+
+        path = Path(db).resolve()
+        for demo in seed_db.DB_PATHS.values():
+            if path == demo.resolve():
+                return load_glossary(DEMO_GLOSSARIES[demo.name])
+    return ""
+
+
+def build_system_prompt(schema: str, today: str, glossary: str = "", dialect: str = "sqlite") -> str:
+    """Sistem prompt'u. Sözlük satırları kurallar listesine girer; sözlük boşsa hiçbir satır eklenmez."""
+    glossary_lines = "".join(line + "\n" for line in glossary.splitlines() if line.strip())
+    return SYSTEM_PROMPT.format(schema=schema, today=today, glossary=glossary_lines,
+                                dialect_name=DIALECT_NAMES[dialect],
+                                date_rule=DATE_RULES[dialect].format(today=today))
 
 
 def generate_sql(question: str, schema: str, today: str, error_feedback: str | None = None,
-                 api_key: str | None = None, completed: str | None = None) -> dict:
+                 api_key: str | None = None, glossary: str = "", dialect: str = "sqlite") -> dict:
     """Soruyu Claude'a gönderir. error_feedback doluysa önceki hatayı düzelttirir.
 
-    completed: ciro kuralında kullanılacak durum değeri (completed_status ile okunur).
+    glossary: iş sözlüğü satırları (load_glossary); dialect: sqlglot dialect adı (sorgu dili ve tarih kuralı).
     """
     import anthropic  # geç import: testler API anahtarı olmadan çalışabilsin
 
@@ -521,7 +557,7 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
     response = client.messages.create(
         model=MODEL,
         max_tokens=16000,  # düşünme (thinking) de bu sınırdan yer; 1024 cevabı kesebilir
-        system=build_system_prompt(schema, today, completed),
+        system=build_system_prompt(schema, today, glossary, dialect),
         messages=messages,
     )
     return parse_llm_json(response_text(response.content))
@@ -530,20 +566,23 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
 def answer(question: str, db_path: DB, today: str, max_retries: int = 1,
            allowed: Allowed | None = None, value_columns: Allowed | None = None,
            api_key: str | None = None, lang: str = i18n.DEFAULT_LANG,
-           allow_retry: Callable[[], bool] | None = None) -> dict:
+           allow_retry: Callable[[], bool] | None = None, glossary: str | None = None) -> dict:
     """Uçtan uca: soru -> SQL -> sonuç. SQL hata verirse modele hatayı gösterip bir kez daha dener.
 
     İzinsiz erişim (UnsafeSQL) ve süre aşımı (QueryTimeout) yeniden denenmez; kullanıcıya gösterilir.
     lang: dönen "error" metninin dili (arayüz dili).
     allow_retry: her yeniden denemeden (yani ikinci model çağrısından) önce sorulur. False dönerse
     deneme yapılmaz ve ilk hata döner. Arayüz bunu günlük çağrı sınırına bağlar.
+    glossary: None ise default_glossary (NL2SQL_GLOSSARY ya da örnek veritabanının sözlüğü).
     """
     database = as_db(db_path)
     schema = get_schema(database, allowed, value_columns)
-    completed = completed_status(database)
+    if glossary is None:
+        glossary = default_glossary(db_path)
     feedback = None
     for attempt in range(max_retries + 1):
-        result = generate_sql(question, schema, today, feedback, api_key=api_key, completed=completed)
+        result = generate_sql(question, schema, today, feedback, api_key=api_key, glossary=glossary,
+                              dialect=database.dialect)
         if not result["sql"]:
             return {**result, "df": None, "error": None}
         try:

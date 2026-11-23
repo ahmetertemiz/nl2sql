@@ -36,6 +36,9 @@ def test_demo_schema_and_prompt_unchanged(lang):
     values = {"orders": ["status"], "customers": ["city"]}
     assert nl2sql.get_schema(path, subset, values) == GOLDEN[f"{lang}_subset"]
     assert nl2sql.get_schema(path, None, {"products": ["category"]}) == GOLDEN[f"{lang}_values_none_allowed"]
+    # İş sözlüğüne taşınan ciro kuralıyla prompt karakteri karakterine aynı
+    prompt = nl2sql.build_system_prompt(nl2sql.get_schema(path, cols), "2026-11-20", nl2sql.default_glossary(path))
+    assert prompt == GOLDEN[f"{lang}_prompt"]
 
 
 def test_sqlite_url_behaves_like_path(tmp_path):
@@ -91,6 +94,14 @@ def test_repr_and_scrub_hide_address():
     msg = db.scrub(f'password authentication failed for user "report_user" at {HOST} ({SECRET})')
     _assert_hidden(msg)
     assert "password authentication failed" in msg
+
+
+def test_app_reports_unreadable_glossary(monkeypatch, tmp_path):
+    monkeypatch.setenv("NL2SQL_GLOSSARY", str(tmp_path / "missing.md"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-no-calls")
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    assert not at.exception and any("missing.md" in e.value for e in at.error)
 
 
 def test_app_shows_generic_error_for_bad_database(monkeypatch):

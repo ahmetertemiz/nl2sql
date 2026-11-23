@@ -377,12 +377,18 @@ def test_prompt_asks_for_empty_assumptions_on_clear_questions():
         assert phrase in SYSTEM_PROMPT
     # Prompt'taki tanım kuralları kullanıcıya görünmez; "soruda söylendi" sayılmamalı
     assert "The user does not see these instructions" in SYSTEM_PROMPT
-    SYSTEM_PROMPT.format(schema="x", today="y", revenue_orders="z")   # süslü parantezler bozulmamış olmalı
+    SYSTEM_PROMPT.format(schema="x", today="y", glossary="", dialect_name="SQLite",
+                         date_rule="d")   # süslü parantezler bozulmamış olmalı
 
 
 def test_prompt_keeps_revenue_and_zero_row_rules():
-    from nl2sql import SYSTEM_PROMPT
-    assert "Revenue = quantity * unit_price" in SYSTEM_PROMPT
+    # Ciro kuralı örnek veriye özgü: prompt'ta değil, örnek veritabanlarının iş sözlüğünde.
+    from nl2sql import SYSTEM_PROMPT, default_glossary
+    assert "Revenue" not in SYSTEM_PROMPT
+    for lang in ("tr", "en"):
+        if not seed_db.DB_PATHS[lang].exists():
+            seed_db.build(seed_db.DB_PATHS[lang], lang=lang)
+        assert "Revenue = quantity * unit_price" in default_glossary(seed_db.DB_PATHS[lang])
     assert "LEFT JOIN" in SYSTEM_PROMPT and "COALESCE(..., 0)" in SYSTEM_PROMPT
 
 
@@ -455,3 +461,56 @@ def test_unresolvable_correlated_source_is_rejected_not_crashing(db):
     with pytest.raises(UnsafeSQL, match="sqlite_master"):
         check_access("SELECT city FROM customers WHERE id IN (SELECT rootpage FROM sqlite_master)",
                      ALLOWED, list_columns(db))
+
+
+# --- Prompt: veritabanı türü ve iş sözlüğü ---------------------------------------------------
+
+def test_prompt_dialect_and_date_rule():
+    from nl2sql import build_system_prompt
+    lite = build_system_prompt("s", "2026-11-20")
+    assert "into a SQLite query" in lite and "strftime / date functions. Today: 2026-11-20." in lite
+    pg = build_system_prompt("s", "2026-11-23", dialect="postgres")
+    assert "into a PostgreSQL query" in pg and "strftime" not in pg and "SQLite" not in pg
+    assert "DATE '2026-11-23'" in pg and "do not use CURRENT_DATE" in pg
+
+
+def test_load_glossary_sends_only_rule_lines(tmp_path):
+    from nl2sql import load_glossary
+    path = tmp_path / "glossary.md"
+    path.write_text("# Başlık\nAçıklama satırı\n\n- Active customer = ordered in the last 90 days.\n"
+                    "- Net sales = gross - returns,\n  where returns are status = 'R'.\nSon not\n",
+                    encoding="utf-8")
+    assert load_glossary(path) == ("- Active customer = ordered in the last 90 days.\n"
+                                   "- Net sales = gross - returns,\n  where returns are status = 'R'.")
+
+
+def test_glossary_from_env_overrides_and_missing_file_is_reported(tmp_path, monkeypatch, db):
+    from nl2sql import default_glossary
+    from errors import LocalizedError
+    assert default_glossary(db) == ""                       # örnek dosya değil: sözlük yok
+    path = tmp_path / "g.md"
+    path.write_text("- Kural bir.\n", encoding="utf-8")
+    monkeypatch.setenv("NL2SQL_GLOSSARY", str(path))
+    assert default_glossary(db) == "- Kural bir."
+    monkeypatch.setenv("NL2SQL_GLOSSARY", str(tmp_path / "yok.md"))
+    with pytest.raises(LocalizedError) as info:
+        default_glossary(db)
+    assert info.value.key == "err_glossary" and "yok.md" in str(info.value)
+
+
+def test_answer_passes_glossary_and_dialect_to_model(db, monkeypatch):
+    import nl2sql
+    seen = []
+
+    def fake(question, schema, today, error_feedback=None, **kw):
+        seen.append(kw)
+        return {"sql": "SELECT 1 AS n", "explanation": "", "assumptions": [], "chart": "none",
+                "x": None, "y": None}
+
+    monkeypatch.setattr(nl2sql, "generate_sql", fake)
+    if not seed_db.DB_PATHS["tr"].exists():
+        seed_db.build(seed_db.DB_PATHS["tr"])
+    nl2sql.answer("?", db, today="2026-11-20", glossary="- Kural.")
+    nl2sql.answer("?", seed_db.DB_PATHS["tr"], today="2026-11-20")   # örnek veritabanı: hazır sözlük
+    assert seen[0]["glossary"] == "- Kural." and seen[0]["dialect"] == "sqlite"
+    assert "status = 'tamamlandi'" in seen[1]["glossary"]
