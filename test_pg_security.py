@@ -252,3 +252,37 @@ def test_app_no_warning_for_readonly_user_and_question_uses_it(monkeypatch, pg_r
     assert seen[0][2] == date.today().isoformat()      # dış veritabanında gerçek tarih
     assert seen[0][3] == ""                            # NL2SQL_GLOSSARY yok: örnek sözlük gönderilmez
     assert pd.DataFrame(at.dataframe[0].value)["n"][0] == 200
+
+
+def test_readme_readonly_user_sql_works(pg_url):
+    """README'deki salt-okunur kullanıcı SQL'i olduğu gibi çalışmalı ve gerçekten salt-okunur olmalı."""
+    import re
+    from pathlib import Path
+
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    readme = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### 1. Create a read-only user (PostgreSQL)", 1)[1]
+    sql = re.search(r"```sql\n(.*?)```", section, re.DOTALL).group(1)
+    db_name = make_url(pg_url).database
+    with psycopg.connect(pg_url, autocommit=True) as admin:
+        if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = 'nl2sql_reader'").fetchone():
+            admin.execute("DROP OWNED BY nl2sql_reader")  # önceki yarım kalmış çalıştırmadan
+            admin.execute("DROP ROLE nl2sql_reader")
+        for statement in sql.replace("mydb", db_name).split(";"):
+            body = "\n".join(l for l in statement.splitlines() if not l.strip().startswith("--")).strip()
+            if body:
+                admin.execute(body)
+    try:
+        url = make_url(pg_url).set(username="nl2sql_reader", password="change-me")
+        reader = Database.from_url(url.render_as_string(hide_password=False))
+        assert reader.write_privileges() == []
+        everything = {"customers": ["id", "name", "city", "signup_date"]}
+        assert len(run_sql(reader, "SELECT city FROM customers", everything)) == 200
+        with pytest.raises(QueryError, match="permission denied"):   # sütun düzeyinde GRANT
+            run_sql(reader, "SELECT name FROM customers", everything)
+    finally:
+        with psycopg.connect(pg_url, autocommit=True) as admin:
+            admin.execute("DROP OWNED BY nl2sql_reader")
+            admin.execute("DROP ROLE IF EXISTS nl2sql_reader")

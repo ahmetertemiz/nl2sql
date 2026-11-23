@@ -48,6 +48,8 @@ The model never gets write access, and never sees columns the user did not allow
 
 Unauthorized access and timeouts are not retried; other SQL errors are sent back to the model once for a fix.
 
+These five layers describe the sample SQLite databases. For PostgreSQL see [Connect your own database](#connect-your-own-database): layer 4 has no PostgreSQL equivalent and is replaced by weaker checks.
+
 **Optional interpretation.** A second model call can explain the result in plain language. It is off by default because this is the only place where result rows reach the model: the first 50 rows plus a pandas-computed summary (min/max with row labels, mean, sum over all rows). The model must take rankings only from that summary, cell contents are marked as data, and the text is labelled as AI-generated.
 
 ## Setup
@@ -73,6 +75,91 @@ Anyone with the link can ask questions with the server's key, so there are three
 
 On Streamlit Community Cloud, put `ANTHROPIC_API_KEY` and `NL2SQL_DAILY_LIMIT` in the app's Secrets as top-level keys. Never commit the key.
 
+## Connect your own database
+
+You can point the app at your own database and run it **on your own machine**. The public demo does not change: when no address is given, the sample SQLite databases open as before. Supported: **SQLite** and **PostgreSQL**.
+
+### 1. Create a read-only user (PostgreSQL)
+
+The database user's privileges are the real boundary, so give the app a user that can only read what it needs:
+
+```sql
+CREATE ROLE nl2sql_reader LOGIN PASSWORD 'change-me';
+GRANT CONNECT ON DATABASE mydb TO nl2sql_reader;
+GRANT USAGE ON SCHEMA public TO nl2sql_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO nl2sql_reader;       -- or only the tables you need
+ALTER ROLE nl2sql_reader SET default_transaction_read_only = on;
+
+-- Optional, recommended for personal data: grant columns, not whole tables
+REVOKE SELECT ON customers FROM nl2sql_reader;
+GRANT SELECT (id, city, signup_date) ON customers TO nl2sql_reader;
+
+-- PostgreSQL 14 and older only: nobody should be able to create objects in public
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+When the app starts it checks whether the connected user can write (`INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` on a table, `CREATE` in the schema or database, superuser). If it can, a red warning stays at the top of the page.
+
+### 2. Set the environment variables and run
+
+```powershell
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+$env:NL2SQL_DATABASE_URL = "postgresql://nl2sql_reader:change-me@localhost:5432/mydb"
+$env:NL2SQL_GLOSSARY = "C:\path\to\glossary.md"     # optional
+streamlit run app.py
+```
+
+| Variable | Meaning |
+|---|---|
+| `NL2SQL_DATABASE_URL` | `postgresql://user:password@host:5432/db` or `sqlite:///path/to/file.db`. Empty: sample databases. |
+| `NL2SQL_DB_SCHEMA` | PostgreSQL schema to use (default: the connection's default, usually `public`). Only one schema. |
+| `NL2SQL_GLOSSARY` | Path to a business glossary (below). Optional. |
+| `NL2SQL_QUERY_TIMEOUT` | Seconds per query (default 5). |
+| `ANTHROPIC_API_KEY`, `NL2SQL_MODEL` | As in [Setup](#setup). |
+
+The address is never shown in the page, in error messages or in logs: connection errors are reported without details, and parts of the address are masked in database error messages.
+
+### 3. Business glossary (optional)
+
+Rules that belong to your data, not to SQL, go in a Markdown file. Only lines that start with `- ` (and their continuation lines indented by two spaces) are sent to the model; headings and notes are for people. The sample databases ship with their own glossaries in [`glossaries/`](glossaries/).
+
+```markdown
+# Business glossary: sales database
+
+- Revenue = quantity * unit_price. Count only orders with status = 'shipped' unless asked otherwise.
+- An active customer is one with an order in the last 90 days.
+- Fiscal year starts on 1 April; "this year" means the current fiscal year.
+```
+
+### What reaches the model
+
+- The schema of the tables and columns you select in the sidebar: names, types, primary/foreign keys and column comments (`COMMENT ON COLUMN`). All columns are selected when the page opens, so **turn off sensitive columns first**.
+- The glossary lines and the question.
+- Only if you pick them under "Columns whose values are shown to the model": up to 20 distinct values per column, 40 characters each.
+- Only if you press "Interpret": the first 50 result rows and a numeric summary.
+- On a retry: the generated SQL and the database's error message.
+- Never: the connection address, other rows, columns you did not select.
+
+### PostgreSQL security layers
+
+| Layer | SQLite (sample data) | PostgreSQL |
+|---|---|---|
+| 1. Schema allowlist | Selected columns only | Same (read with the SQLAlchemy inspector) |
+| 2. `validate_sql` | Single `SELECT`, no modifying keywords | Same, plus PostgreSQL keywords (`INTO`, `COPY`, `TRUNCATE`, `GRANT`, `CALL`, `LOCK`, ...) |
+| 3. `check_access` (sqlglot) | Allowlist, aliases, CTEs, `*` | Same with the `postgres` dialect, plus: tables in other schemas (`pg_catalog`, `information_schema`, ...) are refused, and functions are allowlisted (`pg_read_file`, `set_config`, `current_setting`, `version()`, `current_user`, `dblink`, ... are refused) |
+| 4. Database-side check | SQLite authorizer checks every column read | **No equivalent.** `EXPLAIN` runs first and every table PostgreSQL itself will read must be allowed and in the schema; the user's `GRANT`s are the final boundary |
+| 5. Read-only + timeout | `mode=ro` + progress handler | Every query in its own `SET TRANSACTION READ ONLY` transaction, rolled back afterwards, with `statement_timeout`; the connection also sets `default_transaction_read_only` |
+
+**What is weaker on PostgreSQL:** with SQLite the database itself refuses to read a hidden column. With PostgreSQL the column-level check exists only in sqlglot; the `EXPLAIN` check works per table. A query that sqlglot resolves wrongly could read a hidden column of an allowed table. Function calls are likewise checked only by sqlglot. Column-level `GRANT`s (above) close this gap.
+
+### Limits
+
+- Supported: SQLite and PostgreSQL. Tested with PostgreSQL 16. MySQL, SQL Server and others are not supported.
+- Not measured: model accuracy on PostgreSQL. The evaluation sets run on the sample SQLite databases; 8 of the 18 reference queries in `questions` use SQLite-only syntax and would need PostgreSQL versions.
+- One schema; tables only (views are not listed).
+- "Today" is the real date for your database (the demo uses a fixed date).
+- No row-level filtering: if a column is allowed, all of its rows can be queried.
+
 ## Running the evaluation
 
 ```bash
@@ -83,6 +170,8 @@ python evals/run_evals.py --set holdout_v2 --runs 3      # Turkish holdout
 python evals/run_evals.py --only 13 15                   # selected questions only
 ```
 
+Tests run without an API key. PostgreSQL tests start a temporary server: a Docker container if Docker is running, otherwise the embedded `pgserver` package (`pip install -r requirements-dev.txt`, inside the virtual environment only). If neither works they are skipped, and the end of the test output says why. `NL2SQL_TEST_PG=off` skips them on purpose; `NL2SQL_TEST_PG_URL` uses an existing server.
+
 Column names, column order and extra columns are ignored; row order matters only when the question asks for sorting. Decimals use a 0.5% relative tolerance; integers must match exactly. Ambiguous questions can list alternative reference SQLs (`kabul_edilen`). Results are saved as JSON under `evals/results/`.
 
 ## Files
@@ -91,12 +180,15 @@ Column names, column order and extra columns are ignored; row order matters only
 |---|---|
 | `app.py` | Streamlit UI |
 | `i18n.py` | All UI texts and error messages, English and Turkish |
-| `nl2sql.py` | Core: schema, prompts, SQL generation, security checks, execution, interpretation |
+| `nl2sql.py` | Core: prompts, SQL generation, security checks, interpretation |
+| `db.py` | Database layer: sample SQLite or your own SQLite/PostgreSQL (SQLAlchemy), read-only execution |
+| `errors.py` | Error types shown to the user |
+| `glossaries/` | Business glossaries of the sample databases |
 | `seed_db.py` | Builds `shop.db` (Turkish) and `shop_en.db` (English) from the same seed |
 | `charts.py` | Altair charts: bars in SQL order, chronological date axis |
 | `quota.py` | Daily call counter for the shared key |
 | `evals/` | Question sets (`questions`, `questions_en`, `holdout`, `holdout_v2`), runner and report |
-| `test_*.py` | Tests; none of them need an API key (`python -m pytest -q`) |
+| `test_*.py`, `conftest.py` | Tests; none of them need an API key (`python -m pytest -q`) |
 
 ## License
 
@@ -111,6 +203,8 @@ Doğal dille (Türkçe ya da İngilizce) sorulan soruyu Claude ile SQLite sorgus
 - Model yalnızca kullanıcının seçtiği sütunların şemasını görür. Üretilen SQL beş katmanda denetlenir: izin listesi, `validate_sql`, sqlglot ile `check_access`, SQLite yetkilendiricisi, salt-okunur bağlantı ve süre sınırı.
 - Belirsiz sorularda model verdiği kararı "Varsayımlar" başlığıyla sonucun üstünde yazar.
 - Değerlendirme raporu, tüm ölçümler ve geri alınan adımlarla birlikte Türkçe: [evals/RAPOR.md](evals/RAPOR.md). Holdout sorusu yazım kılavuzu: [evals/HOLDOUT_KILAVUZU.md](evals/HOLDOUT_KILAVUZU.md).
+
+- Kendi veritabanını bağlamak için (yalnızca kendi bilgisayarında): `NL2SQL_DATABASE_URL` ile SQLite ya da PostgreSQL adresi ver, salt-okunur bir kullanıcı kullan; iş kuralların için `NL2SQL_GLOSSARY` ile bir sözlük dosyası ver. Ayrıntılar ve PostgreSQL'de zayıflayan güvenlik katmanı: "Connect your own database".
 
 Kurulum yukarıdaki "Setup" bölümündeki komutlarla yapılır.
 
