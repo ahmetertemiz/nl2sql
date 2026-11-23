@@ -5,7 +5,9 @@ Sırayla denenir:
    veritabanını oluşturur ve siler),
 2. Docker çalışıyorsa geçici bir postgres container'ı (iş bitince kaldırılır),
 3. .venv içindeki gömülü pgserver paketi (pip install -r requirements-dev.txt).
-Hiçbiri olmazsa PostgreSQL testleri nedeni yazılarak ATLANIR (başarısız sayılmaz).
+Hiçbiri olmazsa PostgreSQL testleri nedeni yazılarak ATLANIR (başarısız sayılmaz); test
+çıktısının sonunda hangi yolun kullanıldığı ya da neden atlandığı ayrıca yazılır.
+NL2SQL_TEST_PG=off ile PostgreSQL testleri bilerek atlanır.
 """
 import os
 import shutil
@@ -21,6 +23,7 @@ import pytest
 import seed_db
 
 TEST_DB = "nl2sql_test"
+_PG_STATUS: list[str] = []  # test sonu özetinde gösterilir
 
 # Örnek veritabanının PostgreSQL karşılığı: aynı tablolar, gerçek tarih ve sayı türleri,
 # SQLite'taki "-- açıklama" yorumları COMMENT ON COLUMN olarak.
@@ -114,13 +117,18 @@ def _start_pgserver():
 @pytest.fixture(scope="session")
 def pg_server():
     """Sunucu (yönetici) adresi. Başlatılamazsa bu fixture'ı kullanan testler atlanır."""
+    if os.getenv("NL2SQL_TEST_PG", "").lower() == "off":
+        _PG_STATUS.append("ATLANDI: NL2SQL_TEST_PG=off")
+        pytest.skip("PostgreSQL testleri kapalı (NL2SQL_TEST_PG=off)")
     if os.getenv("NL2SQL_TEST_PG_URL"):
+        _PG_STATUS.append("NL2SQL_TEST_PG_URL ile verilen sunucuda koştu")
         yield os.environ["NL2SQL_TEST_PG_URL"]
         return
     reasons = []
-    for start in (_start_docker, _start_pgserver):
+    for name, start in (("Docker", _start_docker), ("pgserver", _start_pgserver)):
         started, reason = start()
         if started:
+            _PG_STATUS.append(f"{name} ile koştu")
             url, cleanup = started
             try:
                 yield url
@@ -128,7 +136,15 @@ def pg_server():
                 cleanup()
             return
         reasons.append(reason)
+    _PG_STATUS.append("ATLANDI: " + "; ".join(reasons))
     pytest.skip("PostgreSQL başlatılamadı: " + "; ".join(reasons))
+
+
+def pytest_terminal_summary(terminalreporter):
+    """PostgreSQL testlerinin durumu her zaman görünsün: koştu mu, atlandı mı, neden?"""
+    if _PG_STATUS:
+        terminalreporter.write_sep("-", "PostgreSQL testleri: " + _PG_STATUS[0],
+                                   yellow=_PG_STATUS[0].startswith("ATLANDI"), bold=True)
 
 
 def _with_db(url: str, name: str) -> str:
