@@ -4,6 +4,29 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# PostgreSQL (2026-11-23, commit c3ee96f)
+
+`questions` seti, aynı örnek verinin PostgreSQL kopyasında koşuldu: `python evals/run_evals.py --set questions --postgres --runs 1`. Sunucu Docker'da geçici bir PostgreSQL 16'ydı. Veri `shop.db` ile birebir aynıydı; yalnızca türler gerçek `DATE` ve `NUMERIC(10,2)` oldu. Prompt "PostgreSQL query" ve PostgreSQL tarih kuralıyla dolduruldu, iş sözlüğü Türkçe örnek sözlük. 8 sorunun referansı `referans_sql_postgres` alanından alındı (bkz. aşağıdaki bölüm). Ham sonuç: `2026-11-23_112225_questions_x1_pg.json`.
+
+| Ölçüt | PostgreSQL | SQLite (aynı gün, `--runs 1`) |
+|---|---|---|
+| Doğruluk | **20/20** | 20/20 |
+| — kolay / orta / zor | 7/7 · 7/7 · 6/6 | 7/7 · 7/7 · 6/6 |
+| Beklenmeyen sorularda boş liste | 13/13 | 13/13 |
+| Beklenen sorularda dolu liste | 7/7 | 6/7 |
+
+- 20 sorunun hepsi ana referansla eşleşti; `kabul_edilen` alternatifi gerekmedi.
+- Model PostgreSQL söz dizimini kendiliğinden kullandı. Üretilen SQL'lerde hiç `strftime` yok. 5 sorguda `DATE '...'` sabitleri, 3'ünde `COUNT(*) FILTER (WHERE ...)` (16, 17, 18), 2'sinde `to_char`, birinde `date_trunc` var. `CURRENT_DATE` hiç kullanılmadı: prompt'taki "bugün = DATE '2026-11-20'" kuralına uyuldu.
+- 13'te model eksik ay kalmasın diye `generate_series` ile bir ay serisi üretip `LEFT JOIN` yaptı. Fonksiyon izin listesi buna izin verdi (`generate_series` güvenli sayılıyor). Güvenlik katmanları geçerli hiçbir sorguyu reddetmedi.
+- Varsayım farkı (7/7 ve 6/7) tek koşuluk örnekleme farkı: SQLite koşusunda eksik kalan 14'ün varsayımı burada yazıldı.
+
+**Sınırlar.**
+- Tek koşu.
+- Yalnızca ayar seti; bu sorular prompt ayarlanırken görülmüştü. Holdout setlerinin PostgreSQL referansı yok, bu yüzden PostgreSQL için görülmemiş sorularla bir genelleme ölçüsü yok.
+- Gerçek bir kullanıcı veritabanı daha karmaşık olur: çok sayıda tablo, şemada açıklama yok, sözlük boş. Bu sonuç, modelin aynı soruları PostgreSQL söz dizimiyle de doğru yazabildiğini gösterir, başka bir şey değil.
+
+---
+
 # İş sözlüğü taşıması (2026-11-23, commit 6d4307f)
 
 "Kendi veritabanını bağla" desteği için örnek veriye özgü ciro kuralı prompt'tan çıkarıldı. Kural artık iş sözlüğü dosyalarında: `glossaries/shop_tr.md` ve `glossaries/shop_en.md`. Sözlük satırları prompt'ta eski ciro satırının yerine giriyor. Ayrıca "SQLite" ifadesi ve tarih kuralı veritabanı türüne göre dolduruluyor.
