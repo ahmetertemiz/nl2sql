@@ -4,6 +4,37 @@ Model: `claude-sonnet-5-5` · Her soru 3 kez soruldu (`--runs 3`) · "Bugün": 2
 
 ---
 
+# İş sözlüğü taşıması (2026-11-23, commit 6d4307f)
+
+"Kendi veritabanını bağla" desteği için örnek veriye özgü ciro kuralı prompt'tan çıkarıldı. Kural artık iş sözlüğü dosyalarında: `glossaries/shop_tr.md` ve `glossaries/shop_en.md`. Sözlük satırları prompt'ta eski ciro satırının yerine giriyor. Ayrıca "SQLite" ifadesi ve tarih kuralı veritabanı türüne göre dolduruluyor.
+
+**Prompt değişmedi.** Değişiklikten önce iki örnek veritabanı için modele giden şema ve sistem prompt'u kaydedildi (`testdata/demo_golden.json`). Yeni kodun ürettiği prompt bu kayıtla karakteri karakterine aynı. `test_db.py::test_demo_schema_and_prompt_unchanged` bunu her test çalıştırmasında denetliyor. Bu yüzden aşağıdaki ölçüm bir "bozulma yok" kontrolü; olası farklar modelin örneklemesinden gelir.
+
+| Ölçüt | questions (Türkçe) | önceki tek koşu | questions_en (İngilizce) | önceki (x3) |
+|---|---|---|---|---|
+| Doğruluk | **20/20** | 20/20 | **20/20** | 60/60 |
+| Beklenmeyen sorularda boş liste | 13/13 | 13/13 | 13/13 | 39/39 |
+| Beklenen sorularda dolu liste | 6/7 | 7/7 | 5/7 | 20/21 |
+
+Ham sonuçlar: `2026-11-23_103212_questions_x1.json` ve `2026-11-23_103759_questions_en_x1.json` (`--runs 1`).
+
+- Doğruluk değişmedi. Gereksiz varsayım da çıkmadı.
+- Eksik kalan üç varsayım: Türkçe 14, İngilizce 13 ve 18. Üçünde de model "yalnızca tamamlanan siparişler" kuralını uyguladı ve açıklamasında yazdı ("tamamlanmış siparişlerin kalemlerinde...", "for completed orders..."), ama varsayım listesine koymadı. İngilizce 18 önceki x3 ölçümde de bir kez eksik kalmıştı.
+- Prompt aynı olduğu için bu fark sözlük taşımasına bağlanamaz: aynı girdiyle tek koşuda görülen örnekleme farkı. Tek koşu kararsız bir varsayımı yakalamaya yetmez; kesin oran için `--runs 3` gerekir.
+
+## PostgreSQL'de koşmak için referans SQL'ler
+
+questions setinin 18 referans sorgusu (`kabul_edilen` alternatifleri dahil) örnek verinin PostgreSQL kopyasında denendi. Tarihler `DATE`, fiyatlar `NUMERIC(10,2)` olarak taşındı.
+
+| Sonuç | Sorgu | Neden |
+|---|---|---|
+| Olduğu gibi çalışıyor, sonuç SQLite ile aynı | 10 | |
+| PostgreSQL karşılığı gerekiyor | 8 | 9, 11, 12, 13, 14: `strftime` / `date()` · 15: `HAVING` içinde takma ad (`adet`) · 16, 17: `SUM(koşul)` (PostgreSQL'de `SUM(CASE ...)` ya da `COUNT(*) FILTER`) |
+
+Bu 8 sorgunun PostgreSQL karşılıkları yazılmadı (karar bekliyor). Bu yüzden modelin PostgreSQL'deki doğruluğu ölçülmedi; README'de "Limits" altında da böyle yazıyor.
+
+---
+
 # İngilizce (2026-11-22, prompt commit cc78bad + d3829f6)
 
 Uygulama iki dilli oldu. Prompt'lar İngilizceye çevrildi; kuralların anlamı aynı kaldı. Eklenen tek kural: açıklama, varsayımlar, yorum ve sütun takma adları sorunun dilinde yazılır. Takvim kuralı artık dilden bağımsız. Ciro kuralındaki durum değeri ('tamamlandi' / 'completed') veritabanından okunuyor. İngilizce demo verisi (`shop_en.db`) aynı tohumla üretildi: sipariş, tarih, adet ve durum dağılımı `shop.db` ile birebir aynı; adlar, şehirler, kategoriler ve para birimi (USD) farklı.
