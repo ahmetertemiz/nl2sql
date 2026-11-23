@@ -81,6 +81,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_star": "{table}.* (* cannot be used on a table with hidden columns)",
         "err_op": "operation {op}",
         "err_func": "function {name}",
+        "err_row": "{table} as a whole row (the table has hidden columns)",
         "err_timeout": ("The query was stopped because it did not finish within {seconds} seconds. "
                         "Try narrowing the question (e.g. add a date range)."),
         "err_db_connect": ("Could not connect to the database. Check NL2SQL_DATABASE_URL and that the "
@@ -161,6 +162,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_star": "{table}.* (gizli sütun içeren tabloda * kullanılamaz)",
         "err_op": "işlem {op}",
         "err_func": "fonksiyon {name}",
+        "err_row": "{table} satırın tamamı olarak (tabloda gizli sütun var)",
         "err_timeout": ("Sorgu {seconds} saniyede bitmediği için durduruldu. "
                         "Soruyu daraltmayı dene (ör. tarih aralığı ekle)."),
         "err_db_connect": ("Veritabanına bağlanılamadı. NL2SQL_DATABASE_URL'yi ve veritabanının çalıştığını "
@@ -186,5 +188,6 @@ def error_text(lang: str, key: str, params: dict) -> str:
         items += [t(lang, "err_star", table=s) for s in params.get("stars", [])]
         items += [t(lang, "err_op", op=o) for o in params.get("ops", [])]
         items += [t(lang, "err_func", name=f) for f in params.get("funcs", [])]
+        items += [t(lang, "err_row", table=r) for r in params.get("rows", [])]
         return t(lang, key, items=", ".join(sorted(items)))
     return t(lang, key, **params)

@@ -207,6 +207,9 @@ SAFE_POSTGRES_FUNCTIONS = {
     "percent_rank", "first_value", "last_value", "nth_value", "lead", "lag", "row_number", "rank",
     "dense_rank", "num_nonnulls", "num_nulls", "octet_length", "char_length", "character_length",
     "md5", "reverse", "repeat", "left", "right", "position", "strpos", "format", "concat_ws",
+    # JSON: tüm satır referansları (c, c.*) ayrıca denetlendiği için güvenli
+    "row_to_json", "to_json", "to_jsonb", "array_to_json", "json_build_object", "jsonb_build_object",
+    "json_build_array", "jsonb_build_array", "json_agg", "jsonb_agg", "json_object_agg", "jsonb_object_agg",
 }
 # sqlglot'un tanıdığı ama oturum/sunucu bilgisi sızdıran fonksiyonlar (current_user, version()...).
 UNSAFE_TYPED_FUNCTIONS = {"CurrentUser", "SessionUser", "CurrentSchema", "CurrentDatabase",
@@ -331,6 +334,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
     denied: set[str] = set()
     stars: set[str] = set()  # gizli sütunlu tabloda * kullanımı; mesajı dile göre ayrı kurulur
     funcs: set[str] = set()  # izin verilmeyen fonksiyonlar (yalnızca PostgreSQL)
+    rows: set[str] = set()   # gizli sütunlu tabloda tüm satır referansı (yalnızca PostgreSQL)
 
     if dialect == "postgres":
         # Şema: yalnızca adı verilen şema; katalog (veritabanı.şema.tablo) hiç olmaz.
@@ -364,6 +368,26 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                     if ok.get(table) != real[table]:
                         stars.add(src.name)
 
+    # 1b) PostgreSQL: tablo adı ya da takma adı sütun gibi yazılınca SATIRIN TAMAMI döner
+    #     (SELECT c FROM customers c, c::text, (c).name, json_agg(c), (c.*)::text...).
+    #     sqlglot bu adları sütun listesine koymaz; bu yüzden kapsamın ham düğümlerine bakılır.
+    #     Gizli sütunu olan tabloda reddedilir; tamamı açık tabloda ve türetilmiş tablolarda serbest.
+    if dialect == "postgres":
+        for scope in traverse_scope(tree):
+            for node in scope.walk():  # yalnızca bu kapsam; alt sorgular kendi kapsamında denetlenir
+                if not isinstance(node, exp.Column):
+                    continue
+                if isinstance(node.this, exp.Star):        # c.* ifadenin içinde: (c.*)::text, f(c.*)
+                    src, bucket = _find_source(scope, node.table), stars
+                elif not node.table:                        # c, customers, (c).ad
+                    src, bucket = _find_source(scope, node.name), rows
+                else:
+                    continue
+                if isinstance(src, exp.Table) and src.name.lower() in real:
+                    table = src.name.lower()
+                    if ok.get(table) != real[table]:
+                        bucket.add(src.name)
+
     # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
     #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
     typed = {t: {c: "TEXT" for c in cols} for t, cols in schema.items()}  # sqlglot {tablo: {sütun: tür}} ister
@@ -377,9 +401,9 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
         ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
         unknown = {t.sql(dialect=dialect) for t in tree.find_all(exp.Table)
                    if t.name and t.name.lower() not in ok and t.name.lower() not in ctes}
-        if denied or stars or funcs or unknown:
+        if denied or stars or funcs or rows or unknown:
             raise UnsafeSQL("err_denied", names=sorted(denied | unknown), stars=sorted(stars),
-                            funcs=sorted(funcs)) from exc
+                            funcs=sorted(funcs), rows=sorted(rows)) from exc
         raise SQLParseError("err_parse", detail=str(exc)) from exc
 
     for scope in traverse_scope(qualified):
@@ -408,8 +432,9 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
                         if name in real[table] and name not in ok.get(table, set()):
                             denied.add(f"{src.name}.{col.name}")
 
-    if denied or stars or funcs:
-        raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars), funcs=sorted(funcs))
+    if denied or stars or funcs or rows:
+        raise UnsafeSQL("err_denied", names=sorted(denied), stars=sorted(stars), funcs=sorted(funcs),
+                        rows=sorted(rows))
 
 
 def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: list[str],

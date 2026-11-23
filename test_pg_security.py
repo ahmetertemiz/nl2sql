@@ -303,8 +303,29 @@ ROW_LEAKS = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="AÇIK: tüm satır referansı gizli sütunu sızdırıyor (düzeltilecek)")
 @pytest.mark.parametrize("sql", ROW_LEAKS.values(), ids=ROW_LEAKS.keys())
 def test_pg_whole_row_reference_rejected(pg, sql):
     with pytest.raises(UnsafeSQL, match="not allowed"):
         run_sql(pg, sql, ALLOWED)
+
+
+@pytest.mark.parametrize("sql", ROW_LEAKS.values(), ids=ROW_LEAKS.keys())
+def test_pg_parser_alone_rejects_whole_row_reference(pg, sql):
+    with pytest.raises(UnsafeSQL, match=r"customers as a whole row|\* cannot be used"):
+        check_access(sql, ALLOWED, list_columns(pg), dialect="postgres", db_schema="public")
+
+
+@pytest.mark.parametrize("sql", ROW_LEAKS.values(), ids=ROW_LEAKS.keys())
+def test_pg_whole_row_reference_allowed_when_table_fully_open(pg, sql):
+    """Gizli sütunu olmayan tabloda aynı sorgular çalışmaya devam eder."""
+    check_access(sql, FULL_CUSTOMERS, list_columns(pg), dialect="postgres", db_schema="public")
+    assert len(run_sql(pg, sql, FULL_CUSTOMERS)) > 0
+
+
+@pytest.mark.parametrize("sql", [
+    "WITH t AS (SELECT id, city FROM customers) SELECT t FROM t",        # CTE yalnızca izinli sütunları taşır
+    "SELECT s FROM (SELECT id, city FROM customers) s",                  # türetilmiş tablo
+    "SELECT row_to_json(s) FROM (SELECT c.id, c.city FROM customers c) s",
+])
+def test_pg_whole_row_of_derived_table_with_allowed_columns_runs(pg, sql):
+    assert len(run_sql(pg, sql, ALLOWED)) == 200
