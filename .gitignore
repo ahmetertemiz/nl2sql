@@ -11,5 +11,6 @@ shop_en.db
 evals/results/
 
 # Yerel ayarlar ve gizli bilgiler
-.claude/settings.local.json
+.claude/
+.streamlit/secrets.toml
 .env
