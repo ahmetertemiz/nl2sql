@@ -155,7 +155,7 @@ Rules that belong to your data, not to SQL, go in a Markdown file. Only lines th
 ### Limits
 
 - Supported: SQLite and PostgreSQL. Tested with PostgreSQL 16. MySQL, SQL Server and others are not supported.
-- Not measured: model accuracy on PostgreSQL. The evaluation sets run on the sample SQLite databases; 8 of the 18 reference queries in `questions` use SQLite-only syntax and would need PostgreSQL versions.
+- Model accuracy on PostgreSQL is measured only on the `questions` set (`--postgres`, below). The holdout sets have no PostgreSQL references.
 - One schema; tables only (views are not listed).
 - "Today" is the real date for your database (the demo uses a fixed date).
 - No row-level filtering: if a column is allowed, all of its rows can be queried.
@@ -168,7 +168,10 @@ python evals/run_evals.py --set questions --runs 3       # Turkish dev set
 python evals/run_evals.py --set questions_en --runs 3    # English dev set (shop_en.db)
 python evals/run_evals.py --set holdout_v2 --runs 3      # Turkish holdout
 python evals/run_evals.py --only 13 15                   # selected questions only
+python evals/run_evals.py --set questions --postgres     # same data copied into a temporary PostgreSQL
 ```
+
+`--postgres` starts a temporary PostgreSQL server (Docker or `pgserver`, see `pg_local.py`), copies the sample data into it with real `DATE` and `NUMERIC` types, runs the set there and removes it. Questions whose reference uses SQLite-only syntax have a `referans_sql_postgres` field in the YAML.
 
 Tests run without an API key. PostgreSQL tests start a temporary server: a Docker container if Docker is running, otherwise the embedded `pgserver` package (`pip install -r requirements-dev.txt`, inside the virtual environment only). If neither works they are skipped, and the end of the test output says why. `NL2SQL_TEST_PG=off` skips them on purpose; `NL2SQL_TEST_PG_URL` uses an existing server.
 

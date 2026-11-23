@@ -342,3 +342,39 @@ def test_english_set_mirrors_turkish_set():
             assert a.get(key) == b.get(key), (a["id"], key)
         assert (a["referans_sql"] is None) == (b["referans_sql"] is None)
         assert "tamamlandi" not in (b["referans_sql"] or "")
+
+
+# --- PostgreSQL: referans SQL'ler ve --postgres ----------------------------------------------
+
+def test_references_pick_postgres_fields_only_on_postgres():
+    from evals.run_evals import references
+    item = {"referans_sql": "S", "referans_sql_postgres": "P", "kabul_edilen": ["A"]}
+    assert references(item) == [("referans", "S"), ("kabul_edilen[0]", "A")]
+    assert references(item, "postgres") == [("referans", "P"), ("kabul_edilen[0]", "A")]
+    assert references({"referans_sql": "S"}, "postgres") == [("referans", "S")]   # alan yoksa aynısı
+
+
+def test_every_questions_reference_gives_same_result_on_postgres(pg_url, tmp_path):
+    """questions.yaml: her referans (ve kabul_edilen) PostgreSQL'de SQLite ile aynı sonucu vermeli."""
+    from db import Database
+    from evals.run_evals import QUESTIONS, load_questions, references, results_match
+    from nl2sql import run_sql
+
+    lite = seed_db.build(tmp_path / "shop.db")
+    pg = Database.from_url(pg_url)
+    checked = 0
+    for item in load_questions(QUESTIONS):
+        if item["referans_sql"] is None:
+            continue
+        for (label, lite_sql), (_, pg_sql) in zip(references(item), references(item, "postgres")):
+            gold, got = run_sql(lite, lite_sql), run_sql(pg, pg_sql)
+            assert results_match(gold, got, item["sirali"]), (item["id"], label)
+            checked += 1
+    assert checked >= 18
+
+
+def test_postgres_numeric_comes_back_as_float(pg_url):
+    from db import Database
+    from nl2sql import run_sql
+    df = run_sql(Database.from_url(pg_url), "SELECT category, SUM(price) AS toplam FROM products GROUP BY category")
+    assert df["toplam"].dtype == "float64"

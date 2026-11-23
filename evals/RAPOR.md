@@ -31,7 +31,7 @@ questions setinin 18 referans sorgusu (`kabul_edilen` alternatifleri dahil) örn
 | Olduğu gibi çalışıyor, sonuç SQLite ile aynı | 10 | |
 | PostgreSQL karşılığı gerekiyor | 8 | 9, 11, 12, 13, 14: `strftime` / `date()` · 15: `HAVING` içinde takma ad (`adet`) · 16, 17: `SUM(koşul)` (PostgreSQL'de `SUM(CASE ...)` ya da `COUNT(*) FILTER`) |
 
-Bu 8 sorgunun PostgreSQL karşılıkları yazılmadı (karar bekliyor). Bu yüzden modelin PostgreSQL'deki doğruluğu ölçülmedi; README'de "Limits" altında da böyle yazıyor.
+Sonradan bu 8 sorgunun PostgreSQL karşılıkları `referans_sql_postgres` alanına yazıldı; SQLite referansları değişmedi. `test_run_evals.py::test_every_questions_reference_gives_same_result_on_postgres`, setteki her referansın PostgreSQL'de SQLite ile aynı sonucu verdiğini denetliyor. Model ölçümü: `python evals/run_evals.py --set questions --postgres`.
 
 ---
 

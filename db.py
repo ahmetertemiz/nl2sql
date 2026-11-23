@@ -383,7 +383,7 @@ class Database:
                     cur.execute(sql)
                     cols = [d.name for d in cur.description]
                     rows = cur.fetchall()
-                return pd.DataFrame(rows, columns=cols)
+                return _decimals_to_float(pd.DataFrame(rows, columns=cols))
             except UnsafeSQL:
                 raise
             except psycopg.errors.QueryCanceled:
@@ -392,6 +392,18 @@ class Database:
                 raise self._wrap(exc) from None
             finally:
                 raw.rollback()
+
+
+def _decimals_to_float(df: pd.DataFrame) -> pd.DataFrame:
+    """PostgreSQL NUMERIC değerleri Decimal gelir; pandas bunları sayı saymaz (grafik, sayısal özet,
+    değerlendirme karşılaştırması bozulur). Bu sütunları float'a çevir (SQLite REAL ile aynı davranış)."""
+    from decimal import Decimal
+
+    for col in range(df.shape[1]):
+        series = df.iloc[:, col]
+        if series.dtype == object and series.map(lambda v: isinstance(v, Decimal)).any():
+            df.isetitem(col, series.map(lambda v: float(v) if isinstance(v, Decimal) else v).astype("float64"))
+    return df
 
 
 def _literal(value: str) -> str:

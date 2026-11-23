@@ -138,6 +138,61 @@ def build(path: Path | None = None, seed: int = 42, lang: str = "tr") -> Path:
     return path
 
 
+# Örnek veritabanının PostgreSQL karşılığı (testler ve run_evals.py --postgres için): aynı tablolar,
+# gerçek tarih ve sayı türleri; SQLite'taki "-- açıklama" yorumları COMMENT ON COLUMN olarak.
+PG_SCHEMA_TEMPLATE = """
+CREATE TABLE customers (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    signup_date DATE NOT NULL
+);
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    price NUMERIC(10, 2) NOT NULL
+);
+CREATE TABLE orders (
+    id INTEGER PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    order_date DATE NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE TABLE order_items (
+    id INTEGER PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    quantity INTEGER NOT NULL,
+    unit_price NUMERIC(10, 2) NOT NULL
+);
+COMMENT ON COLUMN products.price IS '{currency}';
+COMMENT ON COLUMN orders.status IS '{statuses}';
+COMMENT ON COLUMN order_items.unit_price IS '{unit_price_note}';
+"""
+
+
+def copy_to_postgres(url: str, lang: str = "tr") -> None:
+    """Örnek veriyi (aynı tohum, aynı satırlar) boş bir PostgreSQL veritabanına kopyalar."""
+    import tempfile
+    from contextlib import closing
+
+    import psycopg
+
+    loc = LOCALES[lang]
+    with tempfile.TemporaryDirectory() as tmp:
+        src = build(Path(tmp) / "shop.db", lang=lang)
+        with psycopg.connect(url) as con, closing(sqlite3.connect(src)) as lite:
+            con.execute(PG_SCHEMA_TEMPLATE.format(
+                currency=loc["currency"], statuses=" | ".join(loc["statuses"]),
+                unit_price_note=loc["unit_price_note"]))
+            with con.cursor() as cur:
+                for table in ("customers", "products", "orders", "order_items"):
+                    rows = lite.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+                    marks = ", ".join(["%s"] * len(rows[0]))
+                    cur.executemany(f"INSERT INTO {table} VALUES ({marks})", rows)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Örnek veritabanlarını oluşturur.")
     parser.add_argument("--lang", choices=["tr", "en", "all"], default="all")

@@ -5,18 +5,22 @@
     python evals/run_evals.py --check-gold  # API'siz: yalnızca referans SQL'leri çalıştırıp gösterir
     python evals/run_evals.py --only 13 15  # yalnızca seçilen soruları modele sor
     python evals/run_evals.py --set holdout --runs 3   # ayrı seti, her soruyu 3 kez sor
+    python evals/run_evals.py --postgres               # aynı veriyi geçici bir PostgreSQL'de sor
 
 Ölçüt "çalıştırma doğruluğu"dur (execution accuracy): modelin SQL metni referans
 SQL ile aynı olmak zorunda değil; önemli olan ikisinin de aynı SONUCU döndürmesi.
 Çünkü aynı soruyu cevaplayan çok sayıda farklı ama doğru SQL yazılabilir.
 """
 import argparse
+import functools
 import json
 import os
 import sys
 from datetime import datetime
 from itertools import product
 from pathlib import Path
+
+from decimal import Decimal
 
 import pandas as pd
 import yaml
@@ -25,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # "python evals/run_evals.py" ile çalışınca nl2sql bulunabilsin
 
 import seed_db  # noqa: E402
-from nl2sql import MODEL, answer, format_sql, run_sql  # noqa: E402
+from nl2sql import DEMO_GLOSSARIES, MODEL, answer, as_db, format_sql, load_glossary, run_sql  # noqa: E402
 
 DB_PATH = seed_db.DB_PATHS["tr"]
 QUESTIONS = ROOT / "evals" / "questions.yaml"
@@ -46,6 +50,15 @@ LEVELS = ("kolay", "orta", "zor")
 TODAY = seed_db.TODAY.isoformat()
 
 
+def references(item: dict, dialect: str = "sqlite") -> list[tuple[str, str]]:
+    """Sorunun kabul edilen cevapları (etiket, SQL). PostgreSQL'de varsa *_postgres alanları kullanılır:
+    referans_sql_postgres / kabul_edilen_postgres, SQLite'a özgü söz dizimi olan sorular için."""
+    pg = dialect == "postgres"
+    main = (item.get("referans_sql_postgres") if pg else None) or item["referans_sql"]
+    alts = (item.get("kabul_edilen_postgres") if pg else None) or item.get("kabul_edilen") or []
+    return [("referans", main)] + [(f"kabul_edilen[{i}]", sql) for i, sql in enumerate(alts)]
+
+
 def load_questions(path: Path = QUESTIONS) -> list[dict]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or []  # boş şablon -> []
 
@@ -59,6 +72,8 @@ def _norm(value):
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, Decimal):  # PostgreSQL NUMERIC
         return float(value)
     if isinstance(value, (int, float)) or hasattr(value, "item"):  # numpy sayıları dahil
         return float(value)
@@ -140,8 +155,9 @@ def results_match(gold: pd.DataFrame, pred: pd.DataFrame, ordered: bool = False)
 
 def evaluate_one(item: dict, db_path: Path, answer_fn=answer) -> dict:
     """Tek soruyu değerlendir. answer_fn parametresi testlerde sahte model takabilmek için."""
+    reference = references(item, as_db(db_path).dialect)[0][1] if item["referans_sql"] else None
     out = {"id": item["id"], "soru": item["soru"], "zorluk": item["zorluk"],
-           "kategori": item["kategori"], "uretilen_sql": "", "referans_sql": item["referans_sql"],
+           "kategori": item["kategori"], "uretilen_sql": "", "referans_sql": reference,
            "gecti": False, "neden": ""}
     try:
         result = answer_fn(item["soru"], db_path, today=TODAY)
@@ -179,9 +195,7 @@ def match_any(item: dict, pred: pd.DataFrame, db_path: Path) -> str | None:
     - ilk_satir: true. Tek satır beklenen bir soruda ("en çok satan ay hangisi") model
       tüm satırları sıralı döndürürse, ilk satırı doğruysa geçer.
     """
-    refs = [("referans", item["referans_sql"])]
-    refs += [(f"kabul_edilen[{i}]", sql) for i, sql in enumerate(item.get("kabul_edilen") or [])]
-    for label, sql in refs:
+    for label, sql in references(item, as_db(db_path).dialect):
         gold = run_sql(db_path, sql)
         if results_match(gold, pred, item["sirali"]):
             return label
@@ -195,10 +209,11 @@ def evaluate_repeated(item: dict, db_path: Path, runs: int, answer_fn=answer) ->
     """Aynı soruyu runs kez sor. Model her seferinde aynı SQL'i yazmayabilir;
     tek koşu şanslı ya da şanssız olabilir."""
     attempts = [evaluate_one(item, db_path, answer_fn) for _ in range(runs)]
+    reference = attempts[0]["referans_sql"] if attempts else item["referans_sql"]
     passed = sum(a["gecti"] for a in attempts)
     filled = [bool(a.get("varsayimlar")) for a in attempts]  # her denemede liste dolu mu?
     return {"id": item["id"], "soru": item["soru"], "zorluk": item["zorluk"],
-            "kategori": item["kategori"], "referans_sql": item["referans_sql"],
+            "kategori": item["kategori"], "referans_sql": reference,
             "yorum": item.get("yorum", ""), "gecen": passed, "kosu": runs,
             "kararsiz": 0 < passed < runs, "denemeler": attempts,
             "varsayim_beklenir": item.get("varsayim_beklenir"),  # etiket yoksa None
@@ -265,7 +280,7 @@ def check_gold(items: list[dict], db_path: Path = DB_PATH) -> None:
         if item["referans_sql"] is None:
             print("    (cevaplanamaz soru: modelin SQL üretmemesi beklenir)")
             continue
-        print(run_sql(db_path, item["referans_sql"]).to_string(index=False))
+        print(run_sql(db_path, references(item, as_db(db_path).dialect)[0][1]).to_string(index=False))
 
 
 def main() -> int:
@@ -279,11 +294,48 @@ def main() -> int:
                         help="questions: geliştirme seti; holdout: yalnızca ölçmek için ayrı set")
     parser.add_argument("--runs", type=int, default=1, metavar="N",
                         help="Her soruyu N kez sor; kararsız soruları bulmak için")
+    parser.add_argument("--postgres", action="store_true",
+                        help="Aynı örnek veriyi geçici bir PostgreSQL'e kopyalayıp orada sor "
+                             "(Docker ya da pgserver; bkz. pg_local.py)")
     args = parser.parse_args()
+    if args.postgres:
+        return run_on_postgres(args)
+    return run(args)
+
+
+def run_on_postgres(args) -> int:
+    """Geçici bir PostgreSQL sunucusu aç, setin örnek verisini kopyala, değerlendirmeyi orada yap, kaldır."""
+    import pg_local
+    from db import Database
+
+    if not args.check_gold and not os.getenv("ANTHROPIC_API_KEY"):
+        print("ANTHROPIC_API_KEY tanımlı değil. Önce anahtarı ayarla (README'ye bak).")
+        return 1
+    started, reasons = pg_local.start()
+    if not started:
+        print(f"PostgreSQL başlatılamadı: {reasons}")
+        return 1
+    admin, cleanup, how = started
+    try:
+        url = pg_local.fresh_database(admin, "nl2sql_eval", SET_LANGS.get(args.set, "tr"))
+        database = Database.from_url(url)
+        # Örnek veritabanının sözlüğü: SQLite'ta yol üzerinden kendiliğinden seçilir, burada açıkça verilir.
+        glossary = load_glossary(DEMO_GLOSSARIES[db_for(args.set).name])
+        return run(args, database, functools.partial(answer, glossary=glossary),
+                   label=f"PostgreSQL ({how}, {db_for(args.set).name} kopyası)")
+    finally:
+        pg_local.drop_database(admin, "nl2sql_eval")
+        cleanup()
+
+
+def run(args, database=None, answer_fn=answer, label: str | None = None) -> int:
+    """database None ise setin örnek SQLite dosyası."""
 
     db_path = db_for(args.set)
     if not db_path.exists():  # tohum sabit (seed=42): veri her kurulumda aynı
         seed_db.build(db_path, lang=SET_LANGS.get(args.set, "tr"))
+    target = database if database is not None else db_path
+    label = label or db_path.name
     items = load_questions(SETS[args.set])
     if args.only:
         items = [item for item in items if item["id"] in args.only]
@@ -292,7 +344,7 @@ def main() -> int:
         return 1
 
     if args.check_gold:
-        check_gold(items, db_path)
+        check_gold(items, target)
         return 0
 
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -300,10 +352,10 @@ def main() -> int:
         return 1
 
     print(f"Model: {MODEL} | Set: {args.set} | Soru: {len(items)} | Koşu: {args.runs} | Bugün: {TODAY} "
-          f"| Veritabanı: {db_path.name}\n")
+          f"| Veritabanı: {label}\n")
     records = []
     for item in items:
-        r = evaluate_repeated(item, db_path, args.runs)
+        r = evaluate_repeated(item, target, args.runs, answer_fn)
         records.append(r)
         mark = "✓" if r["gecen"] == r["kosu"] else ("~" if r["kararsiz"] else "✗")
         print(f"{mark} [{r['id']:>3}] {r['gecen']}/{r['kosu']} ({r['zorluk']}) {r['soru']}")
@@ -335,8 +387,9 @@ def main() -> int:
             print(side_by_side(first_fail["uretilen_sql"], r["referans_sql"]))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}_{args.set}_x{args.runs}.json"
-    out.write_text(json.dumps({"model": MODEL, "set": args.set, "kosu": args.runs, "bugun": TODAY, "veritabani": db_path.name,
+    suffix = "_pg" if database is not None else ""
+    out = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}_{args.set}_x{args.runs}{suffix}.json"
+    out.write_text(json.dumps({"model": MODEL, "set": args.set, "kosu": args.runs, "bugun": TODAY, "veritabani": label,
                                "ozet": summary, "sorular": records},
                               ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nAyrıntılar: {out.relative_to(ROOT)}")

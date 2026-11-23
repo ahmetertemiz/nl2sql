@@ -3,6 +3,9 @@
 # Alanlar:
 #   soru          modele sorulan metin
 #   referans_sql  doğru cevabı veren SQL; null = şemayla cevaplanamaz (model SQL üretmemeli)
+#   referans_sql_postgres  (isteğe bağlı) aynı cevabın PostgreSQL karşılığı; yalnızca SQLite'a özgü
+#                 söz dizimi (strftime, SUM(koşul), HAVING'de takma ad) kullanan sorularda. Yoksa
+#                 PostgreSQL'de de referans_sql kullanılır (run_evals.py --postgres).
 #   zorluk        kolay | orta | zor
 #   kategori      filtreleme | gruplama | join | tarih | oran | cevaplanamaz
 #   sirali        true ise satır sırası da karşılaştırılır (soru sıralama istiyorsa)
@@ -102,6 +105,9 @@
   referans_sql: >-
     SELECT COUNT(*) FROM customers c WHERE NOT EXISTS
     (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND strftime('%Y-%m', o.order_date) = '2026-10')
+  referans_sql_postgres: >-
+    SELECT COUNT(*) FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id
+    AND to_char(o.order_date, 'YYYY-MM') = '2026-10')
   zorluk: zor
   varsayim_beklenir: false
   kategori: join
@@ -122,6 +128,8 @@
 - id: 11
   soru: Geçen ay kaç sipariş verildi? Tüm durumları say.
   referans_sql: SELECT COUNT(*) FROM orders WHERE strftime('%Y-%m', order_date) = '2026-10'
+  referans_sql_postgres: >-
+    SELECT COUNT(*) FROM orders WHERE to_char(order_date, 'YYYY-MM') = '2026-10'
   zorluk: kolay
   varsayim_beklenir: false
   kategori: tarih
@@ -135,6 +143,10 @@
     FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id
     WHERE o.status = 'tamamlandi' AND strftime('%Y-%m', o.order_date) = '2026-10'
     GROUP BY p.id ORDER BY adet DESC LIMIT 4
+  referans_sql_postgres: >-
+    SELECT p.name, SUM(oi.quantity) AS adet FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    JOIN products p ON p.id = oi.product_id WHERE o.status = 'tamamlandi'
+    AND to_char(o.order_date, 'YYYY-MM') = '2026-10' GROUP BY p.id ORDER BY adet DESC LIMIT 4
   zorluk: orta
   varsayim_beklenir: false
   kategori: tarih
@@ -147,6 +159,10 @@
     FROM order_items oi JOIN orders o ON o.id = oi.order_id
     WHERE o.status = 'tamamlandi' AND o.order_date >= '2026-08-01' AND o.order_date < '2026-11-01'
     GROUP BY ay ORDER BY ay
+  referans_sql_postgres: >-
+    SELECT to_char(o.order_date, 'YYYY-MM') AS ay, SUM(oi.quantity * oi.unit_price) FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi'
+    AND o.order_date >= DATE '2026-08-01' AND o.order_date < DATE '2026-11-01' GROUP BY ay ORDER BY ay
   zorluk: zor
   varsayim_beklenir: true
   kategori: tarih
@@ -159,6 +175,10 @@
     FROM order_items oi JOIN orders o ON o.id = oi.order_id
     WHERE o.status = 'tamamlandi' AND strftime('%Y', o.order_date) = '2026'
     GROUP BY ay ORDER BY ay
+  referans_sql_postgres: >-
+    SELECT to_char(o.order_date, 'YYYY-MM') AS ay, SUM(oi.quantity * oi.unit_price) FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id WHERE o.status = 'tamamlandi'
+    AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY ay ORDER BY ay
   zorluk: orta
   varsayim_beklenir: true
   kategori: tarih
@@ -172,6 +192,11 @@
     LEFT JOIN (SELECT oi.product_id, oi.quantity FROM order_items oi JOIN orders o ON o.id = oi.order_id
                WHERE o.status = 'tamamlandi' AND o.order_date = '2026-10-02') t ON t.product_id = p.id
     GROUP BY p.id HAVING adet < 3
+  referans_sql_postgres: >-
+    SELECT p.name, COALESCE(SUM(t.quantity), 0) AS adet FROM products p LEFT JOIN (SELECT oi.product_id, oi.quantity
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status = 'tamamlandi' AND o.order_date = DATE '2026-10-02') t ON t.product_id = p.id
+    GROUP BY p.id HAVING COALESCE(SUM(t.quantity), 0) < 3
   zorluk: zor
   varsayim_beklenir: true
   kategori: tarih
@@ -180,6 +205,8 @@
 - id: 16
   soru: Tüm siparişlerin yüzde kaçı iade edildi?
   referans_sql: SELECT 100.0 * SUM(status = 'iade') / COUNT(*) FROM orders
+  referans_sql_postgres: >-
+    SELECT 100.0 * SUM(CASE WHEN status = 'iade' THEN 1 ELSE 0 END) / COUNT(*) FROM orders
   zorluk: orta
   varsayim_beklenir: false
   kategori: oran
@@ -194,6 +221,9 @@
     SELECT c.city, 100.0 * SUM(o.status = 'iade') / COUNT(*) AS oran
     FROM orders o JOIN customers c ON c.id = o.customer_id
     GROUP BY c.city ORDER BY oran DESC LIMIT 1
+  referans_sql_postgres: >-
+    SELECT c.city, 100.0 * SUM(CASE WHEN o.status = 'iade' THEN 1 ELSE 0 END) / COUNT(*) AS oran
+    FROM orders o JOIN customers c ON c.id = o.customer_id GROUP BY c.city ORDER BY oran DESC LIMIT 1
   zorluk: zor
   varsayim_beklenir: true
   kategori: oran
