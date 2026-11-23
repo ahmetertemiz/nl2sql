@@ -286,3 +286,25 @@ def test_readme_readonly_user_sql_works(pg_url):
         with psycopg.connect(pg_url, autocommit=True) as admin:
             admin.execute("DROP OWNED BY nl2sql_reader")
             admin.execute("DROP ROLE IF EXISTS nl2sql_reader")
+
+
+# --- Tüm satır referansı: PostgreSQL'de tablo adı/takma adı sütun gibi kullanılınca satırın tamamı döner ---
+# customers.name gizliyken bu sorguların hepsi adı döndürüyordu (sqlglot c'yi çözülemeyen bir sütun sayıyordu).
+ROW_LEAKS = {
+    "takma ad": "SELECT c FROM customers c",
+    "tablo adı": "SELECT customers FROM customers",
+    "metne çevirme": "SELECT c::text FROM customers c",
+    "alan seçimi": "SELECT (c).name FROM customers c",
+    "yıldızlı satır": "SELECT (c.*)::text FROM customers c",
+    "json_agg": "SELECT json_agg(c) FROM customers c",
+    "array_agg": "SELECT array_agg(c) FROM customers c",
+    "alt sorgu": "SELECT * FROM (SELECT c FROM customers c) s",
+    "CTE": "WITH t AS (SELECT c AS r FROM customers c) SELECT (r).name FROM t",
+}
+
+
+@pytest.mark.xfail(strict=True, reason="AÇIK: tüm satır referansı gizli sütunu sızdırıyor (düzeltilecek)")
+@pytest.mark.parametrize("sql", ROW_LEAKS.values(), ids=ROW_LEAKS.keys())
+def test_pg_whole_row_reference_rejected(pg, sql):
+    with pytest.raises(UnsafeSQL, match="not allowed"):
+        run_sql(pg, sql, ALLOWED)
