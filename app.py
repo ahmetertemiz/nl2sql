@@ -7,6 +7,8 @@ import streamlit as st
 import quota
 import seed_db
 from charts import make_chart
+from db import Database
+from errors import DatabaseError
 from i18n import DEFAULT_LANG, LANGS, t
 from nl2sql import INTERPRET_MAX_ROWS, answer, format_sql, get_schema, interpret_result, list_columns
 
@@ -21,12 +23,31 @@ EXAMPLES = t(lang, "examples")
 
 st.set_page_config(page_title=t(lang, "page_title"), page_icon="🔎", layout="wide")
 
-# Her dilin kendi örnek veritabanı var (shop.db / shop_en.db); tablo ve sütun adları aynı.
-DB_PATH = seed_db.DB_PATHS[lang]
-if not DB_PATH.exists():
-    seed_db.build(DB_PATH, lang=lang)
 
-COLUMNS = list_columns(DB_PATH)
+
+@st.cache_resource(show_spinner=False)
+def external_database(url: str, schema: str | None) -> Database:
+    """Dış veritabanı bağlantısı, oturumlar arasında bir kez kurulur. Adres hiçbir yerde gösterilmez."""
+    return Database.from_url(url, schema=schema)
+
+
+# NL2SQL_DATABASE_URL doluysa kullanıcının kendi veritabanı; boşsa her dilin örnek veritabanı
+# (shop.db / shop_en.db; tablo ve sütun adları aynı). Dış veritabanında dil yalnızca arayüzü değiştirir.
+DB_URL = os.getenv("NL2SQL_DATABASE_URL", "").strip()
+EXTERNAL = bool(DB_URL)
+if EXTERNAL:
+    try:
+        DB = external_database(DB_URL, os.getenv("NL2SQL_DB_SCHEMA") or None)
+        COLUMNS = list_columns(DB)
+    except DatabaseError as exc:
+        st.error(exc.localized(lang))
+        st.stop()
+    EXAMPLES = []  # örnek sorular örnek veriye özgü
+else:
+    DB = seed_db.DB_PATHS[lang]
+    if not DB.exists():
+        seed_db.build(DB, lang=lang)
+    COLUMNS = list_columns(DB)
 
 
 def set_all(on: bool) -> None:
@@ -74,7 +95,7 @@ with st.sidebar:
         st.warning(t(lang, "interpret_warning", rows=INTERPRET_MAX_ROWS), icon=":material/info:")
 
     with st.expander(t(lang, "schema_expander"), icon=":material/visibility:"):
-        st.code(get_schema(DB_PATH, allowed, value_columns) or t(lang, "schema_empty"),
+        st.code(get_schema(DB, allowed, value_columns) or t(lang, "schema_empty"),
                 language="sql")
 
     # Ziyaretçinin kendi anahtarı: günlük sınıra takılmaz, yalnızca bu oturumda tutulur.
@@ -84,7 +105,10 @@ with st.sidebar:
 
 st.title(t(lang, "title"))
 st.caption(t(lang, "subtitle"))
-st.caption(t(lang, "data_date", today=TODAY))
+if EXTERNAL:
+    st.caption(t(lang, "external_db", kind=DB.kind))
+else:
+    st.caption(t(lang, "data_date", today=TODAY))
 
 if not user_key and not os.getenv("ANTHROPIC_API_KEY"):
     st.error(t(lang, "no_key"))
@@ -109,15 +133,16 @@ def ask_example(example: str) -> None:
     st.session_state.run_now = True
 
 
-cols = st.columns(len(EXAMPLES))
-for col, example in zip(cols, EXAMPLES):
-    col.button(example, width="stretch", on_click=ask_example, args=(example,))
+if EXAMPLES:
+    cols = st.columns(len(EXAMPLES))
+    for col, example in zip(cols, EXAMPLES):
+        col.button(example, width="stretch", on_click=ask_example, args=(example,))
 
 # Form: yazarken ya da kenar çubuğunda ayar değiştirirken model çağrılmaz.
 # Model yalnızca Gönder'e (veya bir örnek soruya) basılınca çağrılır; her çağrı ücretli.
 with st.form("ask_form", border=False):
     with st.container(horizontal=True, vertical_alignment="bottom"):
-        st.text_input(t(lang, "question_label"), key="question", placeholder=EXAMPLES[0],
+        st.text_input(t(lang, "question_label"), key="question", placeholder=EXAMPLES[0] if EXAMPLES else None,
                       max_chars=MAX_QUESTION_CHARS)
         submitted = st.form_submit_button(t(lang, "submit"), icon=":material/send:", type="primary")
 
@@ -130,7 +155,7 @@ if (submitted or st.session_state.pop("run_now", False)) and question:
         st.stop()
     with st.spinner(t(lang, "generating")):
         try:
-            result = answer(question, DB_PATH, today=TODAY, allowed=allowed,
+            result = answer(question, DB, today=TODAY, allowed=allowed,
                             value_columns=value_columns, api_key=user_key, lang=lang,
                             allow_retry=may_call_model)  # yeniden deneme de bir hak harcar
         except Exception as exc:

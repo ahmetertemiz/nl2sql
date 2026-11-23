@@ -3,18 +3,20 @@
 Arayüzden (app.py) bilerek ayrı tutuldu: böylece test edilebilir ve
 ileride Streamlit yerine başka bir arayüz (API, Next.js) takılabilir.
 """
+import functools
 import json
 import os
 import re
 import sqlite3
-import time
 from collections.abc import Callable
-from contextlib import closing
 from pathlib import Path
 
 import pandas as pd
 
 import i18n
+from db import Database, QueryError
+from errors import (DatabaseError, LocalizedError, QueryTimeout, SQLParseError,  # noqa: F401
+                    UnsafeSQL, error_message)
 
 MODEL = os.getenv("NL2SQL_MODEL", "claude-sonnet-5-5")
 MAX_ROWS = 500
@@ -173,62 +175,25 @@ FORBIDDEN = re.compile(
 )
 
 
-class LocalizedError(Exception):
-    """Kullanıcıya gösterilen hata: metin değil anahtar taşır, dil gösterim anında seçilir.
-
-    str(exc) İngilizce metni verir (günlükler ve modele geri bildirim için);
-    exc.localized("tr") seçilen dildeki metni.
-    """
-
-    def __init__(self, key: str, **params):
-        self.key, self.params = key, params
-        super().__init__(self.localized("en"))
-
-    def localized(self, lang: str) -> str:
-        return i18n.error_text(lang, self.key, self.params)
-
-
-class UnsafeSQL(LocalizedError, ValueError):
-    pass
-
-
-class QueryTimeout(LocalizedError, RuntimeError):
-    pass
-
-
-class SQLParseError(LocalizedError, ValueError):
-    pass
-
-
-def error_message(exc: Exception, lang: str) -> str:
-    """Hata mesajı seçilen dilde; çevirisi olmayan (ör. SQLite'ın kendi) hatalar olduğu gibi."""
-    return exc.localized(lang) if isinstance(exc, LocalizedError) else str(exc)
-
-
 # İzin listesi: {"tablo": ["sütun", ...]}. None = her şeye izin (değerlendirme ve testler için).
 Allowed = dict[str, list[str]]
+DB = Path | str | Database  # dosya yolu (örnek SQLite) ya da Database nesnesi
 
 
-def _connect_ro(db_path: Path) -> sqlite3.Connection:
-    """Salt-okunur bağlantı. closing() ile kullan: `with sqlite3.connect()` bağlantıyı kapatmaz."""
-    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+def as_db(db: DB) -> Database:
+    """Yol verilirse salt-okunur SQLite olarak aç; Database verilirse olduğu gibi kullan."""
+    return db if isinstance(db, Database) else _sqlite_db(str(db))
 
 
-def _quote(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+@functools.lru_cache(maxsize=16)
+def _sqlite_db(path: str) -> Database:
+    """Aynı dosya için motoru (engine) yeniden kurma; bağlantı her seferinde yeniden açılır (NullPool)."""
+    return Database.from_path(path)
 
 
-def list_columns(db_path: Path) -> dict[str, list[str]]:
+def list_columns(db: DB) -> dict[str, list[str]]:
     """Her tablonun sütun adları; arayüzde izin listesini seçtirmek için."""
-    with closing(_connect_ro(db_path)) as con:
-        return _columns(con)
-
-
-def _columns(con: sqlite3.Connection) -> dict[str, list[str]]:
-    tables = [r[0] for r in con.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    )]
-    return {t: [r[1] for r in con.execute(f"PRAGMA table_info({_quote(t)})")] for t in tables}
+    return as_db(db).columns()
 
 
 def _normalize(allowed: Allowed) -> dict[str, set[str]]:
@@ -236,7 +201,7 @@ def _normalize(allowed: Allowed) -> dict[str, set[str]]:
     return {t.lower(): {c.lower() for c in cols} for t, cols in allowed.items() if cols}
 
 
-def _value_hint(con: sqlite3.Connection, table: str, column: str) -> str:
+def _value_hint(db: Database, table: str, column: str) -> str:
     """Kategorik bir sütunun farklı değerlerini modele gösterilecek kısa bir nota çevirir.
 
     Bu, modele GERÇEK VERİ gönderilen tek yerdir; bu yüzden sınırlı tutulur:
@@ -245,77 +210,28 @@ def _value_hint(con: sqlite3.Connection, table: str, column: str) -> str:
       sütun büyük ihtimalle ad, e-posta gibi kişiye özgü bir alandır),
     - her değer MAX_VALUE_CHARS karakterle kesilir.
     """
-    deadline = time.monotonic() + VALUE_SCAN_TIMEOUT_S
-    con.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
     try:
-        values = [r[0] for r in con.execute(
-            f"SELECT DISTINCT {_quote(column)} FROM {_quote(table)} "
-            f"WHERE {_quote(column)} IS NOT NULL LIMIT {MAX_DISTINCT_VALUES + 1}"
-        )]
-    except sqlite3.OperationalError:
+        values = db.distinct_values(table, column, MAX_DISTINCT_VALUES + 1, VALUE_SCAN_TIMEOUT_S)
+    except (QueryTimeout, QueryError):
         return "values could not be scanned (table too large)"
-    finally:
-        con.set_progress_handler(None, 0)
     if len(values) > MAX_DISTINCT_VALUES:
         return f"more than {MAX_DISTINCT_VALUES} distinct values, not shown"
     shown = sorted(str(v)[:MAX_VALUE_CHARS].replace("'", "''") for v in values)
     return "values: " + ", ".join(f"'{v}'" for v in shown)
 
 
-def get_schema(db_path: Path, allowed: Allowed | None = None,
+def get_schema(db: DB, allowed: Allowed | None = None,
                value_columns: Allowed | None = None) -> str:
     """LLM'e bağlam olarak verilen şema.
 
     allowed verilirse yalnızca izinli tablo ve sütunlar yazılır: model izinsiz bir
-    sütunun ADINI bile görmez. Asıl koruma yine de run_sql'deki yetkilendiricidir.
+    sütunun ADINI bile görmez. Asıl koruma yine de run_sql'deki katmanlardır.
 
     value_columns verilirse bu sütunların farklı değerleri yorum olarak eklenir
     (ör. status -> 'iade', 'iptal', 'tamamlandi'), böylece model WHERE koşulunda
     doğru değeri yazar. Yalnızca izinli sütunlar için geçerlidir.
     """
-    if allowed is None and value_columns:
-        allowed = list_columns(db_path)
-    with closing(_connect_ro(db_path)) as con:
-        rows = con.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-        if allowed is None:
-            return "\n\n".join(sql for _, sql in rows)
-
-        ok = _normalize(allowed)
-        show_values = _normalize(value_columns or {})
-        parts = []
-        for table, create_sql in rows:
-            cols_ok = ok.get(table.lower())
-            if not cols_ok:
-                continue
-            # Sütun satırlarındaki "-- açıklama" yorumlarını koru (ör. status değerleri)
-            comments = {
-                m.group(1).lower(): m.group(2).strip()
-                for m in re.finditer(r'^\s*"?(\w+)"?\s[^\n]*?--([^\n]*)$', create_sql, re.MULTILINE)
-            }
-            refs = {  # yabancı anahtar, yalnızca hedefi de izinliyse yazılır
-                fk[3].lower(): f" REFERENCES {fk[2]}({fk[4]})"
-                for fk in con.execute(f"PRAGMA foreign_key_list({_quote(table)})")
-                if fk[4] and fk[4].lower() in ok.get(fk[2].lower(), set())
-            }
-            lines = []
-            for _, name, col_type, notnull, _, pk in con.execute(f"PRAGMA table_info({_quote(table)})"):
-                if name.lower() not in cols_ok:
-                    continue
-                line = f"    {name} {col_type}"
-                line += " PRIMARY KEY" if pk else (" NOT NULL" if notnull else "")
-                line += refs.get(name.lower(), "")
-                notes = [comments.get(name.lower())]
-                if name.lower() in show_values.get(table.lower(), set()):
-                    notes.append(_value_hint(con, table, name))
-                lines.append((line, "; ".join(n for n in notes if n)))
-            body = [
-                f"{line}{',' if i < len(lines) - 1 else ''}" + (f"  -- {comment}" if comment else "")
-                for i, (line, comment) in enumerate(lines)
-            ]
-            parts.append(f"CREATE TABLE {table} (\n" + "\n".join(body) + "\n)")
-    return "\n\n".join(parts)
+    return as_db(db).schema_text(allowed, value_columns, value_hint=_value_hint)
 
 
 def validate_sql(sql: str) -> str:
@@ -346,7 +262,8 @@ def _find_source(scope, alias: str):
     return None
 
 
-def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> None:
+def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]],
+                 dialect: str = "sqlite") -> None:
     """SQL'i ayrıştırıp (sqlglot) izin listesi dışında bir tablo/sütuna erişiyorsa reddeder.
 
     Bu, çalıştırmadan ÖNCEKİ katmandır ve hangi sütunun sorun olduğunu açıkça söyler.
@@ -354,6 +271,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
     olsa bile veritabanı izinsiz okumayı reddeder.
 
     schema: veritabanındaki gerçek tablolar ve TÜM sütunları (list_columns çıktısı).
+    dialect: sqlglot dialect'i ("sqlite" | "postgres"), veritabanı türüne göre.
     """
     import sqlglot
     from sqlglot import exp
@@ -364,7 +282,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
     ok = _normalize(allowed)
     real = {t.lower(): {c.lower() for c in cols} for t, cols in schema.items()}
     try:
-        tree = sqlglot.parse_one(sql, dialect="sqlite")
+        tree = sqlglot.parse_one(sql, dialect=dialect)
     except ParseError as exc:
         raise SQLParseError("err_parse", detail=str(exc)) from exc
 
@@ -394,7 +312,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
     # 2) Takma adları ve nitelendirilmemiş sütunları gerçek tablolara bağla.
     #    qualify: "SELECT city FROM customers c" -> "SELECT c.city AS city FROM customers AS c"
     typed = {t: {c: "TEXT" for c in cols} for t, cols in schema.items()}  # sqlglot {tablo: {sütun: tür}} ister
-    qualified = qualify(tree.copy(), schema=typed, dialect="sqlite",
+    qualified = qualify(tree.copy(), schema=typed, dialect=dialect,
                         expand_stars=True, validate_qualify_columns=False,
                         quote_identifiers=False)
 
@@ -405,7 +323,7 @@ def check_access(sql: str, allowed: Allowed, schema: dict[str, list[str]]) -> No
             if isinstance(src, exp.Table):
                 name = src.name.lower()
                 if name not in ok:  # pragma_table_info('x') gibi tablo fonksiyonlarının adı boş gelir
-                    denied.add(src.name or src.sql(dialect="sqlite"))
+                    denied.add(src.name or src.sql(dialect=dialect))
 
         outputs = {p.alias_or_name.lower() for p in getattr(scope.expression, "expressions", [])}
         for col in scope.columns:
@@ -459,32 +377,15 @@ def _authorizer(allowed: dict[str, set[str]], real_tables: set[str], denied: lis
     return check
 
 
-def run_sql(db_path: Path, sql: str, allowed: Allowed | None = None,
+def run_sql(db: DB, sql: str, allowed: Allowed | None = None,
             timeout: float = QUERY_TIMEOUT_S) -> pd.DataFrame:
     """Savunma katmanları: validate_sql (regex) -> check_access (ayrıştırıcı, izin listesi)
-    -> yetkilendirici (veritabanı, izin listesi) -> salt-okunur bağlantı -> süre sınırı."""
+    -> veritabanı katmanı (SQLite: yetkilendirici, salt-okunur bağlantı, süre sınırı)."""
+    database = as_db(db)
     safe = validate_sql(sql)
-    denied: list[str] = []
-    ops: list[int] = []
-    with closing(_connect_ro(db_path)) as con:
-        if allowed is not None:
-            check_access(safe, allowed, _columns(con))
-            real_tables = {r[0].lower() for r in con.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
-            con.set_authorizer(_authorizer(_normalize(allowed), real_tables, denied, ops))
-        deadline = time.monotonic() + timeout
-        # SQLite her ~10 bin sanal makine adımında bu fonksiyonu çağırır;
-        # sıfırdan farklı dönerse sorgu yarıda kesilir ("interrupted").
-        con.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
-        try:
-            return pd.read_sql_query(f"SELECT * FROM ({safe}) LIMIT {MAX_ROWS}", con)
-        except Exception as exc:
-            if denied or ops:
-                raise UnsafeSQL("err_denied", names=sorted(set(denied)),
-                                ops=sorted(set(ops))) from exc
-            if time.monotonic() > deadline:
-                raise QueryTimeout("err_timeout", seconds=f"{timeout:g}") from exc
-            raise
+    if allowed is not None:
+        check_access(safe, allowed, database.columns(), dialect=database.dialect)
+    return database.execute(safe, allowed, timeout, MAX_ROWS)
 
 
 def format_sql(sql: str) -> str:
@@ -528,16 +429,15 @@ def response_text(content) -> str:
 COMPLETED_STATUSES = ("tamamlandi", "completed")
 
 
-def completed_status(db_path: Path) -> str | None:
+def completed_status(db: DB) -> str | None:
     """Veritabanındaki 'tamamlanmış sipariş' durum değeri (ör. 'tamamlandi' ya da 'completed').
 
     Ciro kuralı prompt'a sabit bir değerle yazılmaz: Türkçe ve İngilizce veritabanı farklı
     değerler kullanır. orders.status yoksa ya da tanınan bir değer yoksa None.
     """
     try:
-        with closing(_connect_ro(db_path)) as con:
-            values = {r[0] for r in con.execute("SELECT DISTINCT status FROM orders")}
-    except sqlite3.Error:
+        values = set(as_db(db).distinct_values("orders", "status", 100, VALUE_SCAN_TIMEOUT_S))
+    except Exception:
         return None
     return next((v for v in COMPLETED_STATUSES if v in values), None)
 
@@ -572,7 +472,7 @@ def generate_sql(question: str, schema: str, today: str, error_feedback: str | N
     return parse_llm_json(response_text(response.content))
 
 
-def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
+def answer(question: str, db_path: DB, today: str, max_retries: int = 1,
            allowed: Allowed | None = None, value_columns: Allowed | None = None,
            api_key: str | None = None, lang: str = i18n.DEFAULT_LANG,
            allow_retry: Callable[[], bool] | None = None) -> dict:
@@ -583,17 +483,18 @@ def answer(question: str, db_path: Path, today: str, max_retries: int = 1,
     allow_retry: her yeniden denemeden (yani ikinci model çağrısından) önce sorulur. False dönerse
     deneme yapılmaz ve ilk hata döner. Arayüz bunu günlük çağrı sınırına bağlar.
     """
-    schema = get_schema(db_path, allowed, value_columns)
-    completed = completed_status(db_path)
+    database = as_db(db_path)
+    schema = get_schema(database, allowed, value_columns)
+    completed = completed_status(database)
     feedback = None
     for attempt in range(max_retries + 1):
         result = generate_sql(question, schema, today, feedback, api_key=api_key, completed=completed)
         if not result["sql"]:
             return {**result, "df": None, "error": None}
         try:
-            df = run_sql(db_path, result["sql"], allowed)
+            df = run_sql(database, result["sql"], allowed)
             return {**result, "df": df, "error": None}
-        except (UnsafeSQL, QueryTimeout) as exc:  # yeniden deneme bekleme süresini ikiye katlardı
+        except (UnsafeSQL, QueryTimeout, DatabaseError) as exc:  # yeniden deneme bekleme süresini ikiye katlardı
             return {**result, "df": None, "error": error_message(exc, lang)}
         except Exception as exc:  # SQL sözdizimi / olmayan sütun vb.
             feedback = f"SQL: {result['sql']}\nError: {exc}"

@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest
+# PostgreSQL testleri için gömülü sunucu (Docker yoksa); yalnızca .venv içine kurulur
+pgserver>=0.1.4

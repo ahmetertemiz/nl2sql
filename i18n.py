@@ -45,6 +45,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "limit_reached": ("Today's free demo quota is used up. Enter your own Anthropic API key in the "
                           "left panel to continue, or try again tomorrow."),
         "start_hint": "To start, select the columns the model can see in the left panel.",
+        "external_db": "Connected to your own database ({kind}), set with NL2SQL_DATABASE_URL.",
         "question_label": "Your question",
         "submit": "Send",
         "generating": "Preparing the query...",
@@ -78,6 +79,10 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_op": "operation {op}",
         "err_timeout": ("The query was stopped because it did not finish within {seconds} seconds. "
                         "Try narrowing the question (e.g. add a date range)."),
+        "err_db_connect": ("Could not connect to the database. Check NL2SQL_DATABASE_URL and that the "
+                           "database is running (details are hidden so the address is not shown)."),
+        "err_db_url": "NL2SQL_DATABASE_URL is not a valid database address.",
+        "err_db_unsupported": "Unsupported database type: {kind}. Supported: sqlite, postgresql.",
     },
     "tr": {
         "page_title": "Doğal Dille SQL",
@@ -116,6 +121,7 @@ TEXTS: dict[str, dict[str, object]] = {
         "limit_reached": ("Bugünkü ücretsiz demo hakkı doldu. Soldaki panelden kendi Anthropic API "
                           "anahtarını girerek devam edebilir ya da yarın tekrar deneyebilirsin."),
         "start_hint": "Başlamak için soldaki panelden modelin görebileceği sütunları seç.",
+        "external_db": "Kendi veritabanına bağlısın ({kind}); NL2SQL_DATABASE_URL ile ayarlandı.",
         "question_label": "Sorun",
         "submit": "Gönder",
         "generating": "Sorgu hazırlanıyor...",
@@ -148,6 +154,10 @@ TEXTS: dict[str, dict[str, object]] = {
         "err_op": "işlem {op}",
         "err_timeout": ("Sorgu {seconds} saniyede bitmediği için durduruldu. "
                         "Soruyu daraltmayı dene (ör. tarih aralığı ekle)."),
+        "err_db_connect": ("Veritabanına bağlanılamadı. NL2SQL_DATABASE_URL'yi ve veritabanının çalıştığını "
+                           "kontrol et (adres görünmesin diye ayrıntı gösterilmiyor)."),
+        "err_db_url": "NL2SQL_DATABASE_URL geçerli bir veritabanı adresi değil.",
+        "err_db_unsupported": "Desteklenmeyen veritabanı türü: {kind}. Desteklenenler: sqlite, postgresql.",
     },
 }
 
