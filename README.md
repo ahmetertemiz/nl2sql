@@ -146,17 +146,23 @@ Rules that belong to your data, not to SQL, go in a Markdown file. Only lines th
 |---|---|---|
 | 1. Schema allowlist | Selected columns only | Same (read with the SQLAlchemy inspector) |
 | 2. `validate_sql` | Single `SELECT`, no modifying keywords | Same, plus PostgreSQL keywords (`INTO`, `COPY`, `TRUNCATE`, `GRANT`, `CALL`, `LOCK`, ...) |
-| 3. `check_access` (sqlglot) | Allowlist, aliases, CTEs, `*` | Same with the `postgres` dialect, plus: tables in other schemas (`pg_catalog`, `information_schema`, ...) are refused, and functions are allowlisted (`pg_read_file`, `set_config`, `current_setting`, `version()`, `current_user`, `dblink`, ... are refused) |
-| 4. Database-side check | SQLite authorizer checks every column read | **No equivalent.** `EXPLAIN` runs first and every table PostgreSQL itself will read must be allowed and in the schema; the user's `GRANT`s are the final boundary |
+| 3. `check_access` (sqlglot) | Allowlist, aliases, CTEs, `*` | Same with the `postgres` dialect, plus, on tables with hidden columns: whole-row references (`SELECT c FROM customers c`, `c::text`, `(c).name`, `json_agg(c)`, `(c.*)::text`) and column alias lists (`customers AS c(id, city)`) are refused. Tables in other schemas (`pg_catalog`, `information_schema`, ...) are refused, and functions are allowlisted (`pg_read_file`, `set_config`, `current_setting`, `version()`, `current_user`, `dblink`, ... are refused) |
+| 4. Database-side check | SQLite authorizer checks every column read | No authorizer; two checks instead. **Shadow CTEs:** every allowed table with hidden columns is replaced, for that query, by `WITH customers AS NOT MATERIALIZED (SELECT id, city FROM public.customers)`. Any reference to the table by name, including whole-row references the parser might miss, returns only the allowed columns. `public.customers` is rewritten to use the shadow. **`EXPLAIN`:** every table PostgreSQL will read must be allowed and in the schema. The user's `GRANT`s remain the final boundary |
 | 5. Read-only + timeout | `mode=ro` + progress handler | Every query in its own `SET TRANSACTION READ ONLY` transaction, rolled back afterwards, with `statement_timeout`; the connection also sets `default_transaction_read_only` |
 
-**What is weaker on PostgreSQL:** with SQLite the database itself refuses to read a hidden column. With PostgreSQL the column-level check exists only in sqlglot; the `EXPLAIN` check works per table. A query that sqlglot resolves wrongly could read a hidden column of an allowed table. Function calls are likewise checked only by sqlglot. Column-level `GRANT`s (above) close this gap.
+**What is still weaker on PostgreSQL than on SQLite.** Hidden columns are now enforced on both sides: sqlglot refuses the query, and the shadow CTE means that the database cannot return a hidden column when a table is reached by its name. The tests run 45 known bypass queries (whole rows, row comparisons, `LATERAL`, `ONLY`, `TABLESAMPLE`, column alias lists, schema-qualified names, ...) against the database layer alone, and the 38 whole-row and escape queries among them against the parser alone; neither layer leaks on its own. What remains:
+
+- **Functions are checked only by sqlglot.** The shadow covers names in the query, not SQL that a function would run from text. Functions that do this (`query_to_xml`, `dblink`, ...) are refused by the allowlist, but no database-side check backs it up. SQLite's authorizer, by contrast, also sees reads made inside functions.
+- **The real table's row type is not shadowed.** Through a function such as `json_populate_record(null::customers, ...)`, the names and types of hidden columns (not their values) could be read. The allowlist refuses those functions.
+- **The rewrite is this project's own code.** A bug in it would only be caught by the database user's privileges. Column-level `GRANT`s (above) remain the strongest guarantee for personal data.
+- **Side effects:** `TABLESAMPLE` and column alias lists do not work on tables with hidden columns.
 
 ### Limits
 
 - Supported: SQLite and PostgreSQL. Tested with PostgreSQL 16. MySQL, SQL Server and others are not supported.
 - Model accuracy on PostgreSQL is measured only on the `questions` set (`--postgres`, below). The holdout sets have no PostgreSQL references.
 - One schema; tables only (views are not listed).
+- On tables with hidden columns, `TABLESAMPLE`, column alias lists and whole-row expressions are refused. They work on fully allowed tables.
 - "Today" is the real date for your database (the demo uses a fixed date).
 - No row-level filtering: if a column is allowed, all of its rows can be queried.
 
